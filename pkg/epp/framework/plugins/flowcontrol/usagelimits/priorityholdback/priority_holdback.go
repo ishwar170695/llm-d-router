@@ -21,17 +21,17 @@ limitations under the License.
 // Behavior is configured via two independent parameters:
 //   - shape: the interpolation curve (currently "linear"; future: sigmoid, exponential, etc.).
 //   - domain: how priorities map to positions ("rank" for ordinal, "value" for proportional,
-//     "explicit" for a direct operator-supplied map).
+//     "explicit" for operator-supplied anchors with value-based interpolation).
 package priorityholdback
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/flowcontrol"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PolicyType is the registration type for the priority holdback usage limit policy.
@@ -52,6 +52,23 @@ func PolicyFactory(name string, params *json.Decoder, _ plugin.Handle) (plugin.P
 	return newPriorityHoldbackPolicy(*cfg).withName(name), nil
 }
 
+// explicitAnchor associates a priority level with its configured admission ceiling.
+type explicitAnchor struct {
+	priority int
+	ceiling  float64
+}
+
+func buildExplicitAnchors(ceilings map[int]float64) []explicitAnchor {
+	anchors := make([]explicitAnchor, 0, len(ceilings))
+	for p, c := range ceilings {
+		anchors = append(anchors, explicitAnchor{priority: p, ceiling: c})
+	}
+	sort.Slice(anchors, func(i, j int) bool {
+		return anchors[i].priority < anchors[j].priority
+	})
+	return anchors
+}
+
 // priorityHoldbackPolicy gates lower-priority traffic as saturation rises. The gating strategy
 // is resolved to a function at construction time to avoid per-dispatch branching.
 type priorityHoldbackPolicy struct {
@@ -67,6 +84,7 @@ type priorityHoldbackPolicy struct {
 
 	domain   string
 	ceilings map[int]float64
+	anchors  []explicitAnchor
 }
 
 var _ flowcontrol.UsageLimitPolicy = &priorityHoldbackPolicy{}
@@ -92,8 +110,9 @@ func newPriorityHoldbackPolicy(cfg config) *priorityHoldbackPolicy {
 		}
 	case DomainExplicit:
 		p.enableSinglePriorityBypass = false
-		p.computeFn = func(ctx context.Context, _, _ float64, priorities []int, ceilings []float64) {
-			computeLimitExplicit(ctx, cfg.ceilings, priorities, ceilings)
+		p.anchors = buildExplicitAnchors(cfg.ceilings)
+		p.computeFn = func(_ context.Context, _, _ float64, priorities []int, ceilings []float64) {
+			computeLimitExplicit(p.anchors, priorities, ceilings)
 		}
 	}
 	return p
@@ -105,20 +124,6 @@ func (p *priorityHoldbackPolicy) Domain() string {
 
 func (p *priorityHoldbackPolicy) Ceilings() map[int]float64 {
 	return p.ceilings
-}
-
-func (p *priorityHoldbackPolicy) ValidateConfig(info flowcontrol.ConfigInfo) error {
-	if p.domain != DomainExplicit {
-		return nil
-	}
-
-	for _, prio := range info.StaticPriorities {
-		if _, ok := p.ceilings[prio]; !ok {
-			return fmt.Errorf("priority band %d has no configured ceiling in explicit domain", prio)
-		}
-	}
-
-	return nil
 }
 
 func (p *priorityHoldbackPolicy) withName(name string) *priorityHoldbackPolicy {
@@ -140,8 +145,8 @@ func (p *priorityHoldbackPolicy) TypedName() plugin.TypedName {
 }
 
 // ComputeLimit writes an admission ceiling for each priority into the caller-provided buffer.
-// With a single active priority, algorithmic domains bypass holdback (ceiling = cMax) to preserve
-// work-conserving behavior. The explicit domain always uses the configured map value.
+// With a single active priority, algorithmic domains bypass holdback (ceiling = cMax) to preserve work-conserving behavior.
+// The explicit domain computes ceilings from configured anchors (interpolating or clamping as needed) rather than bypassing holdback.
 func (p *priorityHoldbackPolicy) ComputeLimit(ctx context.Context, _ float64, priorities []int, ceilings []float64) {
 	if len(priorities) == 0 {
 		return
@@ -187,19 +192,37 @@ func computeLimitLinearProportional(cMin, cMax float64, priorities []int, ceilin
 	}
 }
 
-// computeLimitExplicit looks up each configured priority ceiling.
+// computeLimitExplicit maps each priority to an admission ceiling using the configured anchors.
 //
-// Precondition: every priority in priorities is expected to have a
-// corresponding ceiling entry in ceilings. Priorities without a configured
-// ceiling receive a value of 0.0.
-func computeLimitExplicit(ctx context.Context, ceilings map[int]float64, priorities []int, out []float64) {
-	logger := log.FromContext(ctx)
+// Unlisted priorities are resolved as follows:
+//   - If outside the configured anchor range, the ceiling is clamped to the nearest boundary anchor.
+//     When only a single anchor is configured, all priorities receive that anchor's ceiling.
+//   - If between two configured anchors, the ceiling is interpolated linearly over priority value
+//     (not ordinal rank). Value-based interpolation makes the mapping a total function from priority
+//     to ceiling determined entirely by configuration, ensuring ceilings remain stable regardless of
+//     which dynamic priority bands are currently provisioned or garbage-collected.
+func computeLimitExplicit(anchors []explicitAnchor, priorities []int, out []float64) {
+	if len(anchors) == 0 {
+		return
+	}
+	lowest := anchors[0]
+	highest := anchors[len(anchors)-1]
+
 	for i, p := range priorities {
-		if c, ok := ceilings[p]; ok {
-			out[i] = c
-		} else {
-			logger.Error(nil, "Missing explicit ceiling for priority band, ceiling set to 0.0", "priority", p)
-			out[i] = 0.0
+		if len(anchors) == 1 || p <= lowest.priority {
+			out[i] = lowest.ceiling
+			continue
+		}
+		if p >= highest.priority {
+			out[i] = highest.ceiling
+			continue
+		}
+		for j := 0; j < len(anchors)-1; j++ {
+			if p <= anchors[j+1].priority {
+				ratio := float64(p-anchors[j].priority) / float64(anchors[j+1].priority-anchors[j].priority)
+				out[i] = anchors[j].ceiling + ratio*(anchors[j+1].ceiling-anchors[j].ceiling)
+				break
+			}
 		}
 	}
 }

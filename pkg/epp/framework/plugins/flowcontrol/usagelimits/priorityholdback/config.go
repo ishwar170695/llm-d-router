@@ -37,7 +37,7 @@ const (
 	DomainRank = "rank"
 	// DomainValue maps proportionally to numerical priority values.
 	DomainValue = "value"
-	// DomainExplicit uses a caller-supplied map of priority level to ceiling value directly.
+	// DomainExplicit uses operator-supplied priority anchors, interpolating missing priorities by priority value and clamping outside the anchor range.
 	DomainExplicit = "explicit"
 )
 
@@ -59,7 +59,7 @@ type apiConfig struct {
 	// Domain selects how priority levels are mapped to positions in the ceiling range.
 	//   - "rank": equal spacing by ordinal rank, ignoring numerical values.
 	//   - "value": spacing proportional to numerical priority differences.
-	//   - "explicit": each priority level's ceiling is taken directly from the Ceilings map.
+	//   - "explicit": priority levels map to ceilings via operator-supplied anchors with value-based interpolation.
 	//
 	// Optional, defaults to "rank".
 	Domain *string `json:"domain,omitempty"`
@@ -78,7 +78,8 @@ type apiConfig struct {
 	// Unused and rejected when domain is "explicit".
 	MaxCeiling *float64 `json:"maxCeiling,omitempty"`
 
-	// Ceilings maps each priority level to its admission ceiling in [0.0, 1.0].
+	// Ceilings maps configured priority levels (anchors) to their admission ceilings in [0.0, 1.0].
+	// Missing priorities interpolate linearly between anchors over priority value, or clamp to boundary anchors.
 	//
 	// Required when domain is "explicit". Ceilings must be monotonically non-increasing
 	// when priorities are sorted highest-first. Unused and rejected when domain is not "explicit".

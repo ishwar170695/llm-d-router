@@ -17,13 +17,11 @@ limitations under the License.
 package priorityholdback
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/flowcontrol"
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 )
 
@@ -598,8 +596,9 @@ func TestPolicyFactory_ExplicitDomain(t *testing.T) {
 func TestComputeLimitExplicit_TwoPriorities(t *testing.T) {
 	t.Parallel()
 	m := map[int]float64{100: 0.95, 10: 0.30}
+	anchors := buildExplicitAnchors(m)
 	ceilings := make([]float64, 2)
-	computeLimitExplicit(context.Background(), m, []int{100, 10}, ceilings)
+	computeLimitExplicit(anchors, []int{100, 10}, ceilings)
 	require.Len(t, ceilings, 2)
 	assert.InDelta(t, 0.95, ceilings[0], 1e-9)
 	assert.InDelta(t, 0.30, ceilings[1], 1e-9)
@@ -608,21 +607,83 @@ func TestComputeLimitExplicit_TwoPriorities(t *testing.T) {
 func TestComputeLimitExplicit_ThreePriorities(t *testing.T) {
 	t.Parallel()
 	m := map[int]float64{100: 0.95, 50: 0.70, 10: 0.30}
+	anchors := buildExplicitAnchors(m)
 	ceilings := make([]float64, 3)
-	computeLimitExplicit(context.Background(), m, []int{100, 50, 10}, ceilings)
+	computeLimitExplicit(anchors, []int{100, 50, 10}, ceilings)
 	require.Len(t, ceilings, 3)
 	assert.InDelta(t, 0.95, ceilings[0], 1e-9)
 	assert.InDelta(t, 0.70, ceilings[1], 1e-9)
 	assert.InDelta(t, 0.30, ceilings[2], 1e-9)
 }
 
-func TestComputeLimitExplicit_SinglePriority(t *testing.T) {
+func TestComputeLimitExplicit_InterpolationBetweenAnchors(t *testing.T) {
 	t.Parallel()
-	m := map[int]float64{100: 0.80}
-	ceilings := make([]float64, 1)
-	computeLimitExplicit(context.Background(), m, []int{100}, ceilings)
-	require.Len(t, ceilings, 1)
-	assert.InDelta(t, 0.80, ceilings[0], 1e-9)
+	// Anchors: {100: 0.95, 50: 0.70, 10: 0.30}
+	// Priority 75 is halfway between 50 and 100: 0.70 + 0.5 * (0.95 - 0.70) = 0.825
+	// Priority 30 is halfway between 10 and 50: 0.30 + 0.5 * (0.70 - 0.30) = 0.50
+	m := map[int]float64{100: 0.95, 50: 0.70, 10: 0.30}
+	anchors := buildExplicitAnchors(m)
+	ceilings := make([]float64, 2)
+	computeLimitExplicit(anchors, []int{75, 30}, ceilings)
+	require.Len(t, ceilings, 2)
+	assert.InDelta(t, 0.825, ceilings[0], 1e-9)
+	assert.InDelta(t, 0.50, ceilings[1], 1e-9)
+}
+
+func TestComputeLimitExplicit_BoundaryClamping(t *testing.T) {
+	t.Parallel()
+	// Anchors: {100: 0.95, 10: 0.30}
+	// Priorities > 100 clamp to 0.95. Priorities < 10 clamp to 0.30.
+	m := map[int]float64{100: 0.95, 10: 0.30}
+	anchors := buildExplicitAnchors(m)
+	ceilings := make([]float64, 4)
+	computeLimitExplicit(anchors, []int{200, 100, 10, -50}, ceilings)
+	require.Len(t, ceilings, 4)
+	assert.InDelta(t, 0.95, ceilings[0], 1e-9, "priority above highest anchor clamps to highest ceiling")
+	assert.InDelta(t, 0.95, ceilings[1], 1e-9, "exact highest anchor match")
+	assert.InDelta(t, 0.30, ceilings[2], 1e-9, "exact lowest anchor match")
+	assert.InDelta(t, 0.30, ceilings[3], 1e-9, "priority below lowest anchor clamps to lowest ceiling")
+}
+
+func TestComputeLimitExplicit_SingleAnchor(t *testing.T) {
+	t.Parallel()
+	// Single anchor: all unlisted priorities receive that anchor's ceiling.
+	m := map[int]float64{50: 0.70}
+	anchors := buildExplicitAnchors(m)
+	ceilings := make([]float64, 4)
+	computeLimitExplicit(anchors, []int{100, 50, 20, -10}, ceilings)
+	require.Len(t, ceilings, 4)
+	for i, c := range ceilings {
+		assert.InDelta(t, 0.70, c, 1e-9, "ceiling at index %d should match single anchor", i)
+	}
+}
+
+func TestComputeLimitExplicit_InterpolatesOverPriorityValueNotRank(t *testing.T) {
+	t.Parallel()
+	// Anchors: {100: 1.0, 0: 0.0}
+	// If interpolating on rank with two dynamic bands {90, 10}, rank would evenly divide the range:
+	// 90 -> 0.667, 10 -> 0.333.
+	// But interpolating on value: 90 -> 0.90, 10 -> 0.10.
+	m := map[int]float64{100: 1.0, 0: 0.0}
+	anchors := buildExplicitAnchors(m)
+	ceilings := make([]float64, 2)
+	computeLimitExplicit(anchors, []int{90, 10}, ceilings)
+	require.Len(t, ceilings, 2)
+	assert.InDelta(t, 0.90, ceilings[0], 1e-9, "priority 90 should scale proportionally by value")
+	assert.InDelta(t, 0.10, ceilings[1], 1e-9, "priority 10 should scale proportionally by value")
+}
+
+func TestComputeLimitExplicit_MonotonicallyNonIncreasing(t *testing.T) {
+	t.Parallel()
+	m := map[int]float64{100: 0.95, 50: 0.70, 10: 0.30}
+	anchors := buildExplicitAnchors(m)
+	priorities := []int{150, 100, 80, 50, 30, 10, 0, -20}
+	ceilings := make([]float64, len(priorities))
+	computeLimitExplicit(anchors, priorities, ceilings)
+	for i := 1; i < len(ceilings); i++ {
+		assert.GreaterOrEqual(t, ceilings[i-1], ceilings[i],
+			"ceiling[%d] (%f) should be >= ceiling[%d] (%f)", i-1, ceilings[i-1], i, ceilings[i])
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +692,7 @@ func TestComputeLimitExplicit_SinglePriority(t *testing.T) {
 
 func TestComputeLimit_ExplicitDomain_SinglePriority(t *testing.T) {
 	t.Parallel()
-	// Explicit domain does not apply the single-priority bypass; it uses the mapped ceiling.
+	// Explicit domain does not apply the single-priority bypass; it uses the configured ceiling.
 	policy := newPriorityHoldbackPolicy(config{
 		domain:   DomainExplicit,
 		ceilings: map[int]float64{100: 0.80},
@@ -643,18 +704,38 @@ func TestComputeLimit_ExplicitDomain_SinglePriority(t *testing.T) {
 		"explicit domain single priority should return the configured ceiling, not cMax")
 }
 
-func TestComputeLimit_ExplicitDomain_MultiplePriorities(t *testing.T) {
+func TestComputeLimit_ExplicitDomain_InterpolatesAndClamps(t *testing.T) {
 	t.Parallel()
 	policy := newPriorityHoldbackPolicy(config{
 		domain:   DomainExplicit,
 		ceilings: map[int]float64{100: 0.95, 50: 0.70, 10: 0.30},
 	})
 
-	ceilings := computeLimits(t, policy, 0.5, []int{100, 50, 10})
-	require.Len(t, ceilings, 3)
+	// 120 (clamped to 0.95), 100 (exact 0.95), 75 (interpolated 0.825),
+	// 50 (exact 0.70), 30 (interpolated 0.50), 10 (exact 0.30), 0 (clamped to 0.30)
+	ceilings := computeLimits(t, policy, 0.5, []int{120, 100, 75, 50, 30, 10, 0})
+	require.Len(t, ceilings, 7)
 	assert.InDelta(t, 0.95, ceilings[0], 1e-9)
-	assert.InDelta(t, 0.70, ceilings[1], 1e-9)
-	assert.InDelta(t, 0.30, ceilings[2], 1e-9)
+	assert.InDelta(t, 0.95, ceilings[1], 1e-9)
+	assert.InDelta(t, 0.825, ceilings[2], 1e-9)
+	assert.InDelta(t, 0.70, ceilings[3], 1e-9)
+	assert.InDelta(t, 0.50, ceilings[4], 1e-9)
+	assert.InDelta(t, 0.30, ceilings[5], 1e-9)
+	assert.InDelta(t, 0.30, ceilings[6], 1e-9)
+}
+
+func TestComputeLimit_ExplicitDomain_SingleAnchor_MultiplePriorities(t *testing.T) {
+	t.Parallel()
+	policy := newPriorityHoldbackPolicy(config{
+		domain:   DomainExplicit,
+		ceilings: map[int]float64{50: 0.80},
+	})
+
+	ceilings := computeLimits(t, policy, 0.5, []int{100, 50, 0})
+	require.Len(t, ceilings, 3)
+	for i, c := range ceilings {
+		assert.InDelta(t, 0.80, c, 1e-9, "ceiling at index %d should match single anchor", i)
+	}
 }
 
 func TestComputeLimit_ExplicitDomain_EmptyPriorities(t *testing.T) {
@@ -666,51 +747,6 @@ func TestComputeLimit_ExplicitDomain_EmptyPriorities(t *testing.T) {
 
 	ceilings := computeLimits(t, policy, 0.5, []int{})
 	assert.Empty(t, ceilings)
-}
-
-func TestPriorityHoldbackPolicy_ValidateConfig(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Non-explicit domain passes validation regardless of static priorities", func(t *testing.T) {
-		t.Parallel()
-		policy := newPriorityHoldbackPolicy(config{
-			domain: DomainRank,
-		})
-		err := policy.ValidateConfig(flowcontrol.ConfigInfo{
-			StaticPriorities: []int{0, 100},
-		})
-		assert.NoError(t, err)
-	})
-
-	t.Run("Explicit domain passes validation when all static priorities are configured", func(t *testing.T) {
-		t.Parallel()
-		policy := newPriorityHoldbackPolicy(config{
-			domain: DomainExplicit,
-			ceilings: map[int]float64{
-				0:   1.0,
-				100: 0.8,
-			},
-		})
-		err := policy.ValidateConfig(flowcontrol.ConfigInfo{
-			StaticPriorities: []int{0, 100},
-		})
-		assert.NoError(t, err)
-	})
-
-	t.Run("Explicit domain fails validation when a static priority is missing", func(t *testing.T) {
-		t.Parallel()
-		policy := newPriorityHoldbackPolicy(config{
-			domain: DomainExplicit,
-			ceilings: map[int]float64{
-				0: 1.0,
-			},
-		})
-		err := policy.ValidateConfig(flowcontrol.ConfigInfo{
-			StaticPriorities: []int{0, 100},
-		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "priority band 100 has no configured ceiling in explicit domain")
-	})
 }
 
 // ---------------------------------------------------------------------------

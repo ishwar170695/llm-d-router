@@ -45,7 +45,12 @@ Use when the numerical spacing between priority values carries meaning and prior
 
 #### `explicit`
 
-Each priority level's admission ceiling is taken directly from the operator-supplied `ceilings` map. No interpolation is performed.
+Maps priorities to admission ceilings using operator-supplied priority anchors in the `ceilings` map.
+
+Unlisted priorities are resolved as follows:
+- Priorities between two configured anchors are linearly interpolated over numerical priority value (not ordinal rank). Value-based interpolation makes the mapping a total function from priority to ceiling, ensuring ceilings remain stable regardless of dynamic priority band churn.
+- Priorities outside the configured anchor range are clamped to the nearest boundary anchor: priorities above the highest configured anchor receive the highest anchor's ceiling, and priorities below the lowest configured anchor receive the lowest anchor's ceiling.
+- When only a single anchor is configured, all priorities receive that anchor's ceiling.
 
 Use when hand-tuned, per-band ceiling values are required and the algorithmic domains do not produce the desired distribution.
 
@@ -55,15 +60,13 @@ Use when hand-tuned, per-band ceiling values are required and the algorithmic do
 - Ceilings must be monotonically non-increasing when priorities are sorted highest-first.
 - `shape`, `minCeiling`, and `maxCeiling` must not be set when `domain` is `explicit`; they are rejected during configuration validation.
 
-**Limitation:** The `explicit` domain is intended for statically configured priority bands. To ensure unknown priorities are not dynamically provisioned during control plane reconciliation, set `allowDynamicPriorityProvisioning: false` in `flowControl`. When disabled, only statically configured priority bands exist; requests for unknown priorities are rejected by the registry and logged. If a priority without a configured ceiling reaches the policy, it falls back to a ceiling of `0.0`. If dynamic priority band provisioning is required, consider using the `rank` or `value` domains.
-
 **Parameters:**
 
 - `shape` (string, optional, default: `"linear"`): Interpolation curve. Currently only `"linear"` is supported.
 - `domain` (string, optional, default: `"rank"`): Priority mapping: `"rank"`, `"value"`, or `"explicit"`.
 - `minCeiling` (float64, required unless domain is `"explicit"`, no default): Ceiling for the lowest priority. Must be in `[0.0, 1.0)`.
 - `maxCeiling` (float64, optional, default: `1.0`): Ceiling for the highest priority. Must be in `(0.0, 1.0]`.
-- `ceilings` (map[int]float64, required when domain is `"explicit"`): Maps each priority level to its admission ceiling in `[0.0, 1.0]`.
+- `ceilings` (map[int]float64, required when domain is `"explicit"`): Maps priority levels (anchors) to their admission ceilings in `[0.0, 1.0]`.
 
 `minCeiling` is required for algorithmic domains because it determines how aggressively low-priority traffic is gated and there is no universally correct default.
 
@@ -93,7 +96,6 @@ plugins:
         50: 0.70
         10: 0.30
 flowControl:
-  allowDynamicPriorityProvisioning: false
   usageLimitPolicyPluginRef: my-explicit-holdback
 ```
 
