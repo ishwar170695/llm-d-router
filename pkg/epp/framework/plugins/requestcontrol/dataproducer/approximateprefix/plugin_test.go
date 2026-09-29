@@ -1,5 +1,6 @@
 /*
 Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -53,7 +54,7 @@ func disableMinBlockSizeClamp(t *testing.T) {
 // tokenizedBody returns a request body carrying only a tokenized prompt.
 func tokenizedBody(tokenIDs []uint32) *fwkrh.InferenceRequestBody {
 	return &fwkrh.InferenceRequestBody{
-		TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{tokenIDs}},
+		TokenizedRequest: &fwkrh.TokenizedRequest{Prompts: []fwkrh.PromptTokens{{TokenIDs: tokenIDs}}},
 	}
 }
 
@@ -92,7 +93,7 @@ func TestProduce(t *testing.T) {
 	assert.Equal(t, 2, len(state.PerPromptHashes[0])) // 2 token IDs at blockSize 1 -> 2 blocks
 
 	// Verify pod match info was set (should be 0 match since indexer is empty)
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	for _, ep := range endpoints {
 		info, ok := ep.Get(key)
 		assert.True(t, ok)
@@ -213,6 +214,10 @@ func TestDataProducerValidation(t *testing.T) {
 	}, {
 		AutoTune:        false,
 		BlockSizeTokens: 0,
+	}, {
+		AutoTune:               false,
+		BlockSizeTokens:        1,
+		MaxPrefixBlocksToMatch: -1,
 	}}
 
 	for _, config := range validConfigs {
@@ -269,7 +274,7 @@ func TestPrefixPluginPartialPrefixMatch(t *testing.T) {
 	}
 	_ = p.Produce(context.Background(), req3, endpoints)
 
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	// Verify pod1 has the correct prefix match info
 	info1, _ := endpoint1.Get(key)
 	prefixInfo1 := info1.(*attrprefix.PrefixCacheMatchInfo)
@@ -332,7 +337,7 @@ func TestPrefixPluginPrefixGrowth(t *testing.T) {
 	extendedHashCount := len(state2.PerPromptHashes[0])
 	assert.Greater(t, extendedHashCount, initialHashCount)
 
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	info, _ := endpoint1.Get(key)
 	prefixInfo := info.(*attrprefix.PrefixCacheMatchInfo)
 	assert.Greater(t, prefixInfo.MatchBlocks(), 0, "should have prefix cache hit")
@@ -516,6 +521,22 @@ func TestGetBlockSize_AutotuneAboveMinimumPassesThrough(t *testing.T) {
 	assert.Equal(t, 128, got, "autotuned block size at or above minimum should not be clamped")
 }
 
+func TestGetBlockSize_AutotunePrefersPrefixMatchUnitOverBlockSize(t *testing.T) {
+	cfg := config{AutoTune: true, BlockSizeTokens: 16}
+	p, err := newDataProducer(context.Background(), ApproxPrefixCachePluginType, cfg, testHandle())
+	assert.NoError(t, err)
+
+	endpoint := fwksched.NewEndpoint(
+		&fwkdl.EndpointMetadata{ID: k8stypes.NamespacedName{Name: "pod1"}},
+		&fwkdl.Metrics{CacheBlockSize: 4096, CachePrefixMatchUnit: 128},
+		fwkdl.NewAttributes(),
+	)
+
+	got := p.GetBlockSize([]fwksched.Endpoint{endpoint})
+	assert.Equal(t, 128, got,
+		"prefix_match_unit should be preferred over block_size when both are present")
+}
+
 // TestGetBlockSize_ManualConfigClampedBelowMinimum verifies that the floor
 // applies to manual configuration as well — configured BlockSizeTokens below
 // minBlockSizeTokens is silently raised so the indexer memory bound holds
@@ -663,8 +684,8 @@ func TestProduce_MultiPrompt(t *testing.T) {
 		RequestID:   uuid.NewString(),
 		TargetModel: "test-model",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				PerPromptTokens: [][]uint32{{1, 2, 3}, {4, 5}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{
+				Prompts: []fwkrh.PromptTokens{{TokenIDs: []uint32{1, 2, 3}}, {TokenIDs: []uint32{4, 5}}},
 			},
 		},
 	}
@@ -678,7 +699,7 @@ func TestProduce_MultiPrompt(t *testing.T) {
 	assert.Equal(t, 3, len(state.PerPromptHashes[0]), "first prompt: 3 tokens at blockSize 1")
 	assert.Equal(t, 2, len(state.PerPromptHashes[1]), "second prompt: 2 tokens at blockSize 1")
 
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	info, ok := endpoint.Get(key)
 	assert.True(t, ok)
 	prefixInfo := info.(*attrprefix.PrefixCacheMatchInfo)
@@ -706,8 +727,8 @@ func TestMultiPromptMatchAggregation(t *testing.T) {
 		RequestID:   uuid.NewString(),
 		TargetModel: "test-model",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				PerPromptTokens: [][]uint32{{1, 2, 3}, {4, 5}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{
+				Prompts: []fwkrh.PromptTokens{{TokenIDs: []uint32{1, 2, 3}}, {TokenIDs: []uint32{4, 5}}},
 			},
 		},
 	}
@@ -725,14 +746,14 @@ func TestMultiPromptMatchAggregation(t *testing.T) {
 		RequestID:   uuid.NewString(),
 		TargetModel: "test-model",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				PerPromptTokens: [][]uint32{{1, 2, 3}, {4, 5}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{
+				Prompts: []fwkrh.PromptTokens{{TokenIDs: []uint32{1, 2, 3}}, {TokenIDs: []uint32{4, 5}}},
 			},
 		},
 	}
 	_ = p.Produce(context.Background(), req2, endpoints)
 
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	info, _ := endpoint.Get(key)
 	prefixInfo := info.(*attrprefix.PrefixCacheMatchInfo)
 	assert.Equal(t, 5, prefixInfo.MatchBlocks(), "all 5 blocks (3+2) should match")
@@ -759,8 +780,8 @@ func TestMultiPromptPartialMatch(t *testing.T) {
 		RequestID:   uuid.NewString(),
 		TargetModel: "test-model",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				PerPromptTokens: [][]uint32{{1, 2}, {3, 4}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{
+				Prompts: []fwkrh.PromptTokens{{TokenIDs: []uint32{1, 2}}, {TokenIDs: []uint32{3, 4}}},
 			},
 		},
 	}
@@ -778,14 +799,14 @@ func TestMultiPromptPartialMatch(t *testing.T) {
 		RequestID:   uuid.NewString(),
 		TargetModel: "test-model",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{
-				PerPromptTokens: [][]uint32{{1, 2}, {5, 6}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{
+				Prompts: []fwkrh.PromptTokens{{TokenIDs: []uint32{1, 2}}, {TokenIDs: []uint32{5, 6}}},
 			},
 		},
 	}
 	_ = p.Produce(context.Background(), req2, endpoints)
 
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	info, _ := endpoint.Get(key)
 	prefixInfo := info.(*attrprefix.PrefixCacheMatchInfo)
 	assert.Equal(t, 2, prefixInfo.MatchBlocks(), "only first prompt's 2 blocks should match")
@@ -824,7 +845,7 @@ func TestPrefixPluginTokenizedRequest(t *testing.T) {
 	assert.Equal(t, 4, len(state.PerPromptHashes[0]))
 
 	// Verify match info was set on the endpoint (0 match since indexer is empty).
-	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType).String()
+	key := attrprefix.PrefixCacheMatchInfoDataKey.WithNonEmptyProducerName(ApproxPrefixCachePluginType)
 	info, ok := endpoint.Get(key)
 	assert.True(t, ok)
 	prefixInfo := info.(*attrprefix.PrefixCacheMatchInfo)

@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +19,7 @@ package tokenload
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,9 +54,9 @@ func TestTokenLoadScorer(t *testing.T) {
 
 		// pod1: 0 in-flight, no current-request impact. Score = 1 - 0/1000 = 1.0
 		// pod2: 500 in-flight, no current-request impact. Score = 1 - 500/1000 = 0.5
-		endpoints[1].Put(scorer.inFlightLoadDataKey.String(), &attrconcurrency.InFlightLoad{Tokens: 500})
+		endpoints[1].Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: 500})
 		// pod3: 1000 in-flight, no current-request impact. Score = 1 - 1000/1000 = 0.0
-		endpoints[2].Put(scorer.inFlightLoadDataKey.String(), &attrconcurrency.InFlightLoad{Tokens: 1000})
+		endpoints[2].Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: 1000})
 
 		scores := scorer.Score(context.Background(), &fwksched.InferenceRequest{}, endpoints)
 
@@ -75,16 +77,16 @@ func TestTokenLoadScorer(t *testing.T) {
 		}
 
 		// pod1: 0 in-flight + 250 current = 250. Score = 1 - 250/1000 = 0.75
-		endpoints[0].Put(scorer.inFlightLoadDataKey.String(), &attrconcurrency.InFlightLoad{Tokens: 0})
-		endpoints[0].Put(scorer.uncachedRequestTokensDataKey.String(), &attrconcurrency.UncachedRequestTokens{Tokens: 250})
+		endpoints[0].Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: 0})
+		endpoints[0].Put(scorer.uncachedRequestTokensDataKey, &attrconcurrency.UncachedRequestTokens{Tokens: 250})
 
 		// pod2: 250 in-flight + 250 current = 500. Score = 1 - 500/1000 = 0.5
-		endpoints[1].Put(scorer.inFlightLoadDataKey.String(), &attrconcurrency.InFlightLoad{Tokens: 250})
-		endpoints[1].Put(scorer.uncachedRequestTokensDataKey.String(), &attrconcurrency.UncachedRequestTokens{Tokens: 250})
+		endpoints[1].Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: 250})
+		endpoints[1].Put(scorer.uncachedRequestTokensDataKey, &attrconcurrency.UncachedRequestTokens{Tokens: 250})
 
 		// pod3: 750 in-flight + 250 current = 1000. Score = 1 - 1000/1000 = 0.0
-		endpoints[2].Put(scorer.inFlightLoadDataKey.String(), &attrconcurrency.InFlightLoad{Tokens: 750})
-		endpoints[2].Put(scorer.uncachedRequestTokensDataKey.String(), &attrconcurrency.UncachedRequestTokens{Tokens: 250})
+		endpoints[2].Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: 750})
+		endpoints[2].Put(scorer.uncachedRequestTokensDataKey, &attrconcurrency.UncachedRequestTokens{Tokens: 250})
 
 		scores := scorer.Score(context.Background(), &fwksched.InferenceRequest{}, endpoints)
 
@@ -111,12 +113,40 @@ func TestTokenLoadScorer(t *testing.T) {
 		}
 
 		var nilLoad *attrconcurrency.InFlightLoad
-		endpoints[0].Put(scorer.inFlightLoadDataKey.String(), nilLoad)
+		endpoints[0].Put(scorer.inFlightLoadDataKey, nilLoad)
 		var nilUncached *attrconcurrency.UncachedRequestTokens
-		endpoints[0].Put(scorer.uncachedRequestTokensDataKey.String(), nilUncached)
+		endpoints[0].Put(scorer.uncachedRequestTokensDataKey, nilUncached)
 
 		// Typed nil; should score as if 0 token load (no panic)
 		scores := scorer.Score(context.Background(), &fwksched.InferenceRequest{}, endpoints)
 		assert.Equal(t, 1.0, scores[endpoints[0]], "Endpoint with typed nil attribute should have score 1.0 (0 load)")
 	})
+}
+
+func BenchmarkTokenLoadScorer_Score(b *testing.B) {
+	numPods := 8
+	endpoints := make([]fwksched.Endpoint, numPods)
+	scorer := &TokenLoadScorer{
+		typedName:                    fwkplugin.TypedName{Type: TokenLoadScorerType, Name: TokenLoadScorerType},
+		queueThresholdTokens:         1000.0,
+		inFlightLoadDataKey:          attrconcurrency.InFlightLoadDataKey.WithNonEmptyProducerName(""),
+		uncachedRequestTokensDataKey: attrconcurrency.UncachedRequestTokensDataKey.WithNonEmptyProducerName(""),
+	}
+
+	for i := 0; i < numPods; i++ {
+		ep := fwksched.NewEndpoint(&fwkdl.EndpointMetadata{
+			ID: types.NamespacedName{Namespace: "default", Name: fmt.Sprintf("pod%d", i)},
+		}, &fwkdl.Metrics{}, nil)
+		ep.Put(scorer.inFlightLoadDataKey, &attrconcurrency.InFlightLoad{Tokens: int64(i * 100)})
+		endpoints[i] = ep
+	}
+
+	req := &fwksched.InferenceRequest{}
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = scorer.Score(ctx, req, endpoints)
+	}
 }

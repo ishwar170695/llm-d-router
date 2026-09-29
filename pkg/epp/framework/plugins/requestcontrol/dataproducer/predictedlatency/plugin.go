@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -87,7 +88,7 @@ type PredictedLatency struct {
 // flight and Requests the active request count. Returns false when the
 // attribute is absent (e.g. an endpoint added before the producer injected it).
 func (pl *PredictedLatency) endpointInFlightLoad(endpoint fwksched.Endpoint) (*attrconcurrency.InFlightLoad, bool) {
-	if raw, ok := endpoint.Get(pl.inFlightLoadDataKey.String()); ok {
+	if raw, ok := endpoint.Get(pl.inFlightLoadDataKey); ok {
 		if load, ok := raw.(*attrconcurrency.InFlightLoad); ok && load != nil {
 			return load, true
 		}
@@ -417,7 +418,7 @@ type predictedLatencyCtx struct {
 func newPredictedLatencyContext(request *fwksched.InferenceRequest) *predictedLatencyCtx {
 	inputTokenCount := 0
 	if request.Body != nil {
-		if tp := request.Body.TokenizedPrompt; tp != nil {
+		if tp := request.Body.TokenizedRequest; tp != nil {
 			inputTokenCount = tp.TokenCount()
 		}
 	}

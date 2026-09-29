@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,7 +25,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/llm-d/llm-d-router/pkg/epp/datalayer"
+	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwkrc "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requestcontrol"
 	fwksched "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
@@ -90,6 +94,31 @@ func (p *ctxObservingPlugin) Produce(ctx context.Context, _ *fwksched.InferenceR
 
 func (p *ctxObservingPlugin) Produces() map[fwkplugin.DataKey]any { return nil }
 
+// lateAttributePlugin ignores cancellation and writes after the timeout path
+// has returned, modeling a producer that does not stop promptly on ctx.Done().
+type lateAttributePlugin struct {
+	key     fwkplugin.DataKey
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (p *lateAttributePlugin) TypedName() fwkplugin.TypedName {
+	return fwkplugin.TypedName{Type: "mock", Name: "late-attribute"}
+}
+
+func (p *lateAttributePlugin) Produce(_ context.Context, request *fwksched.InferenceRequest, _ []fwksched.Endpoint) error {
+	close(p.started)
+	<-p.release
+	request.PutAttribute(p.key, 1)
+	close(p.done)
+	return nil
+}
+
+func (p *lateAttributePlugin) Produces() map[fwkplugin.DataKey]any {
+	return map[fwkplugin.DataKey]any{p.key: 0}
+}
+
 // TestDataProducerPluginsWithTimeout_CancelsPluginContext verifies that the
 // child context passed to plugins is cancelled with DeadlineExceeded when the
 // timeout fires. Without this cancellation, a slow plugin would continue
@@ -115,6 +144,47 @@ func TestDataProducerPluginsWithTimeout_CancelsPluginContext(t *testing.T) {
 	plugin.wg.Wait()
 	assert.ErrorIs(t, plugin.observedCtxErr, context.DeadlineExceeded,
 		"plugin's context should be cancelled with DeadlineExceeded when timeout fires")
+}
+
+func TestDataProducerPluginsWithTimeout_LateAttributeWriteIsSafe(t *testing.T) {
+	request := &fwksched.InferenceRequest{}
+	plugin := &lateAttributePlugin{
+		key:     fwkplugin.NewDataKey("late", "mock"),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+
+	err := dataProducerPluginsWithTimeout(
+		context.Background(),
+		20*time.Millisecond,
+		[]fwkrc.DataProducer{plugin},
+		request,
+		nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DataProducer execution timed out")
+	<-plugin.started
+
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-plugin.done:
+				return
+			default:
+				_, _ = request.GetAttribute(plugin.key)
+			}
+		}
+	}()
+	close(plugin.release)
+	<-plugin.done
+	<-readerDone
+
+	value, ok := fwksched.ReadRequestAttribute[int](request, plugin.key)
+	require.True(t, ok)
+	assert.Equal(t, 1, value)
 }
 
 func TestDataProducerPluginsWithTimeout(t *testing.T) {
@@ -388,4 +458,65 @@ func TestProducerTimeout(t *testing.T) {
 			assert.Equal(t, tc.want, producerTimeout(tc.p))
 		})
 	}
+}
+
+// writingProducer writes a fixed key regardless of what it declares, standing
+// in for a producer whose implementation has drifted from its declaration.
+type writingProducer struct {
+	name     string
+	declares map[fwkplugin.DataKey]any
+	writes   fwkplugin.DataKey
+}
+
+func (p *writingProducer) TypedName() fwkplugin.TypedName {
+	return fwkplugin.TypedName{Type: "writing-producer", Name: p.name}
+}
+
+func (p *writingProducer) Produces() map[fwkplugin.DataKey]any { return p.declares }
+
+func (p *writingProducer) Produce(_ context.Context, _ *fwksched.InferenceRequest, endpoints []fwksched.Endpoint) error {
+	for _, endpoint := range endpoints {
+		endpoint.Put(p.writes, testCloneable("value"))
+	}
+	return nil
+}
+
+type testCloneable string
+
+func (c testCloneable) Clone() fwkdl.Cloneable { return c }
+
+func TestExecutePluginsAsDAG_EnforcesProducesDeclaration(t *testing.T) {
+	declared := fwkplugin.NewDataKey("declared", "writing-producer")
+	undeclared := fwkplugin.NewDataKey("undeclared", "other-producer")
+
+	newEndpoint := func() fwksched.Endpoint {
+		return fwksched.NewEndpoint(&fwkdl.EndpointMetadata{}, &fwkdl.Metrics{}, fwkdl.NewAttributes())
+	}
+
+	t.Run("declared write reaches the endpoint", func(t *testing.T) {
+		endpoint := newEndpoint()
+		producer := &writingProducer{name: "p", declares: map[fwkplugin.DataKey]any{declared: nil}, writes: declared}
+		datalayer.RegisterScopeSpecs([]fwkplugin.Plugin{producer})
+
+		err := executePluginsAsDAG(context.Background(), []fwkrc.DataProducer{producer},
+			&fwksched.InferenceRequest{}, []fwksched.Endpoint{endpoint})
+
+		require.NoError(t, err)
+		_, ok := endpoint.Get(declared)
+		assert.True(t, ok)
+	})
+
+	t.Run("undeclared write fails the producer and leaves the endpoint untouched", func(t *testing.T) {
+		endpoint := newEndpoint()
+		producer := &writingProducer{name: "p", declares: map[fwkplugin.DataKey]any{declared: nil}, writes: undeclared}
+		datalayer.RegisterScopeSpecs([]fwkplugin.Plugin{producer})
+
+		err := executePluginsAsDAG(context.Background(), []fwkrc.DataProducer{producer},
+			&fwksched.InferenceRequest{}, []fwksched.Endpoint{endpoint})
+
+		require.Error(t, err, "a write outside Produces() must fail the producer rather than be dropped silently")
+		assert.Contains(t, err.Error(), "undeclared")
+		_, ok := endpoint.Get(undeclared)
+		assert.False(t, ok)
+	})
 }

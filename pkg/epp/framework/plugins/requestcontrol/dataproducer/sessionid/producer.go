@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ func (p *Producer) Produce(_ context.Context, request *fwksched.InferenceRequest
 	if id == "" {
 		return nil
 	}
-	request.PutAttribute(p.dk.String(), attrsession.SessionID(id))
+	request.PutAttribute(p.dk, attrsession.SessionID(id))
 	return nil
 }
 

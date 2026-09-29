@@ -1,13 +1,13 @@
 # Agent Identity
 
 **Type:** `agent-identity`
-**Interfaces:** `requestcontrol.RequestHeaderProcessor`
+**Interfaces:** `requestcontrol.RequestHeaderProcessor`, `plugin.ProducerPlugin`
 
 Resolves a per-session identity from agent-specific HTTP headers and stores it as a request attribute (`"agent-identity"`) for use by other subsystems. The Director then derives `FairnessID` from this attribute when no explicit fairness header is present, so every turn of an agent session lands in the same flow-control fairness queue.
 
 ## What It Does
 
-The plugin runs after request assembly and before admission control. It inspects a fixed set of agent session headers and stores the first non-empty value as a request attribute via `request.PutAttribute("agent-identity", value)`.
+The plugin runs after request assembly and before admission control. It inspects a fixed set of agent session headers and stores the first non-empty value as a request attribute via `request.PutAttribute(AgentIdentityKey, value)`, whose serialized name is `agent-identity`.
 
 The plugin stores the identity as a request attribute only — it does not set `FairnessID`. The Director reads the `"agent-identity"` attribute and derives `FairnessID` from it when no explicit `x-llm-d-inference-fairness-id` header is present. This separation means the agent identity is available as a reliable signal to other subsystems (scheduling, KV cache control, etc.) without being conflated with flow-control identity.
 
@@ -51,7 +51,7 @@ The plugin is stateless and safe under concurrent use.
 Default configuration — no parameters, only the built-in headers are checked:
 
 ```yaml
-apiVersion: inference.networking.x-k8s.io/v1alpha1
+apiVersion: llm-d.ai/v1
 kind: EndpointPickerConfig
 plugins:
   - type: agent-identity
@@ -60,7 +60,7 @@ plugins:
 With additional headers — checked before the built-in defaults (header names are arbitrary; substitute whatever the agent actually emits):
 
 ```yaml
-apiVersion: inference.networking.x-k8s.io/v1alpha1
+apiVersion: llm-d.ai/v1
 kind: EndpointPickerConfig
 plugins:
   - type: agent-identity

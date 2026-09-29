@@ -1,6 +1,6 @@
 # Sample EPP configuration: GPU utilization-aware routing
 # Routes requests to pods with lower GPU utilization, filtering out overloaded endpoints.
-apiVersion: llm-d.ai/v1alpha1
+apiVersion: llm-d.ai/v1
 kind: EndpointPickerConfig
 plugins:
 - type: dcgm-data-source
@@ -13,7 +13,8 @@ plugins:
 - type: endpoint-attribute-filter
   name: gpu-utilization-filter
   parameters:
-    attribute: "GPUUtilization/dcgm-extractor"
+    attribute: "GPUUtilization"
+    producer: "dcgm-extractor"
     onMissing: "Pass"
     fallbackOnEmpty: true
     algorithm:
@@ -24,7 +25,8 @@ plugins:
 - type: endpoint-attribute-scorer
   name: gpu-utilization-scorer
   parameters:
-    attributeKey: "GPUUtilization/dcgm-extractor"
+    attributeKey: "GPUUtilization"
+    producer: "dcgm-extractor"
     algorithm:
       type: "linear_lower_is_better"
       normalization:

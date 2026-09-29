@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,6 +40,6 @@ type SessionID string
 // future change of storage location or value type does not ripple through
 // every reader.
 func ReadSessionID(r *fwksched.InferenceRequest) (SessionID, bool) {
-	key := SessionIDDataKey.WithNonEmptyProducerName(sessionidconstants.SessionIDProducerType).String()
+	key := SessionIDDataKey.WithNonEmptyProducerName(sessionidconstants.SessionIDProducerType)
 	return fwksched.ReadRequestAttribute[SessionID](r, key)
 }

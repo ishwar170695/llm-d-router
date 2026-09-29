@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -398,20 +398,21 @@ type namedSessionID string
 
 func TestResolveSessionID(t *testing.T) {
 	const attr = "agent-identity"
+	attrKey := plugin.NewDataKey(attr, "")
 
 	withHeader := func(name, value string) *scheduling.InferenceRequest {
 		return &scheduling.InferenceRequest{Headers: map[string]string{name: value}}
 	}
 	withAttr := func(value string) *scheduling.InferenceRequest {
 		req := &scheduling.InferenceRequest{Headers: map[string]string{}}
-		req.PutAttribute(attr, value)
+		req.PutAttribute(attrKey, value)
 		return req
 	}
 	// withAttrValue stores an arbitrary value under the attribute key, to cover
 	// producers that publish a named string type or a non-string value.
 	withAttrValue := func(value any) *scheduling.InferenceRequest {
 		req := &scheduling.InferenceRequest{Headers: map[string]string{}}
-		req.PutAttribute(attr, value)
+		req.PutAttribute(attrKey, value)
 		return req
 	}
 
@@ -450,7 +451,7 @@ func TestResolveSessionID(t *testing.T) {
 			sources: []SessionIDSource{{Header: "x-session-id"}, {Attribute: attr}},
 			request: func() *scheduling.InferenceRequest {
 				req := withHeader("x-session-id", "from-header")
-				req.PutAttribute(attr, "from-attr")
+				req.PutAttribute(attrKey, "from-attr")
 				return req
 			}(),
 			want: "from-header",

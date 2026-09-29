@@ -30,12 +30,16 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 )
 
+// AgentIdentityKey is the request-attribute key under which this plugin
+// publishes the resolved agent identity. Downstream consumers such as the
+// Director read it via scheduling.ReadRequestAttribute to derive the
+// FairnessID.
+// The key carries no producer name: configuration names this attribute bare
+// ("attribute: agent-identity"), and any plugin able to resolve an agent
+// identity is an acceptable source.
+var AgentIdentityKey = plugin.NewDataKey("agent-identity", "")
+
 const (
-	// AgentIdentityKey is the request-attribute key under which
-	// this plugin publishes the resolved agent identity.
-	// Downstream consumers such as the Director read it
-	// via scheduling.ReadRequestAttribute to derive the FairnessID.
-	AgentIdentityKey        = "agent-identity"
 	PluginType              = "agent-identity"
 	ClaudeCodeSessionHeader = "x-claude-code-session-id"
 	OpenCodeSessionHeader   = "x-session-affinity"
@@ -96,8 +100,11 @@ func mergeHeaders(extras, defaults []string) []string {
 	return merged
 }
 
-// compile-time interface assertion
-var _ requestcontrol.RequestHeaderProcessor = &Plugin{}
+// compile-time interface assertions
+var (
+	_ requestcontrol.RequestHeaderProcessor = &Plugin{}
+	_ plugin.ProducerPlugin                 = &Plugin{}
+)
 
 // Plugin resolves agent identity from provider-specific headers and stores it
 // as a request attribute for use by other subsystems.
@@ -110,9 +117,15 @@ func (p *Plugin) TypedName() plugin.TypedName {
 	return p.typedName
 }
 
+// Produces declares the agent identity request attribute written by this
+// request-header processor.
+func (p *Plugin) Produces() map[plugin.DataKey]any {
+	return map[plugin.DataKey]any{AgentIdentityKey: ""}
+}
+
 func (p *Plugin) RequestHeader(_ context.Context, request *scheduling.InferenceRequest) error {
 	for _, header := range p.priorityHeaders {
-		if id := request.Headers[header]; id != "" {
+		if id := strings.TrimSpace(request.Headers[header]); id != "" {
 			request.PutAttribute(AgentIdentityKey, id)
 			return nil
 		}

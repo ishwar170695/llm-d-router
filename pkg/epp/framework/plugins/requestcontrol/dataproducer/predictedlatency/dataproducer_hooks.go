@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -45,7 +46,7 @@ func (pl *PredictedLatency) Produce(ctx context.Context, request *fwksched.Infer
 	var prefixCacheScore float64
 	for _, endpoint := range endpoints {
 
-		if prefixCacheInfoRaw, ok := endpoint.Get(pl.prefixMatchDataKey.String()); ok {
+		if prefixCacheInfoRaw, ok := endpoint.Get(pl.prefixMatchDataKey); ok {
 			prefixCacheInfo := prefixCacheInfoRaw.(*attrprefix.PrefixCacheMatchInfo)
 			prefixCacheScore = float64(prefixCacheInfo.MatchBlocks()) / float64(prefixCacheInfo.TotalBlocks())
 			if !math.IsNaN(prefixCacheScore) {
@@ -95,7 +96,7 @@ func (pl *PredictedLatency) Produce(ctx context.Context, request *fwksched.Infer
 					pred.TPOT,
 					pl.getEndpointRunningRequestCount(pred.Endpoint),
 				)
-				pred.Endpoint.Put(pl.latencyPredictionInfoDataKey.String(), latencyInfo)
+				pred.Endpoint.Put(pl.latencyPredictionInfoDataKey, latencyInfo)
 				logger.V(logutil.DEBUG).Info("Stored latency prediction in endpoint",
 					"pod", pred.Endpoint.GetMetadata().ID.Name,
 					"ttft", pred.TTFT,
@@ -126,7 +127,7 @@ func (pl *PredictedLatency) Produce(ctx context.Context, request *fwksched.Infer
 // sizes at 0.
 func (pl *PredictedLatency) captureEncoderCacheSizes(ctx context.Context, predictedLatencyCtx *predictedLatencyCtx, endpoint fwksched.Endpoint) {
 	logger := log.FromContext(ctx)
-	raw, ok := endpoint.Get(pl.encoderCacheDataKey.String())
+	raw, ok := endpoint.Get(pl.encoderCacheDataKey)
 	if !ok {
 		return
 	}
@@ -171,7 +172,7 @@ func (pl *PredictedLatency) Consumes() plugin.DataDependencies {
 	required := map[plugin.DataKey]any{
 		pl.prefixMatchDataKey:                attrprefix.PrefixCacheMatchInfo{},
 		pl.inFlightLoadDataKey:               attrconcurrency.InFlightLoad{},
-		tokenproducer.TokenizedPromptDataKey: fwksched.TokenizedPrompt{},
+		tokenproducer.TokenizedPromptDataKey: fwksched.TokenizedRequest{},
 	}
 	// Required (not Optional) because only Required dependencies create DAG
 	// ordering edges; the encoder-cache producer must run before this plugin.

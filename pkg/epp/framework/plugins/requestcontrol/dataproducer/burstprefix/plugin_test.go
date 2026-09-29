@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import (
 func tokenizedRequest(tokens []uint32) *fwksched.InferenceRequest {
 	return &fwksched.InferenceRequest{
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{tokens}},
+			TokenizedRequest: &fwkrh.TokenizedRequest{Prompts: []fwkrh.PromptTokens{{TokenIDs: tokens}}},
 		},
 	}
 }
@@ -42,7 +42,7 @@ func tokenizedRequest(tokens []uint32) *fwksched.InferenceRequest {
 func (p *dataProducer) assignedReplica(t *testing.T, endpoints []fwksched.Endpoint) string {
 	t.Helper()
 	for _, ep := range endpoints {
-		v, ok := ep.Get(p.dk.String())
+		v, ok := ep.Get(p.dk)
 		require.True(t, ok, "PrefixCacheMatchInfo must be attached to every endpoint")
 		info, ok := v.(*attrprefix.PrefixCacheMatchInfo)
 		require.True(t, ok)
@@ -121,7 +121,7 @@ func TestProduce_CancelledContextBeforeSeal(t *testing.T) {
 	require.Error(t, err, "a context cancelled before seal must return an error")
 
 	for _, ep := range endpoints {
-		v, ok := ep.Get(p.dk.String())
+		v, ok := ep.Get(p.dk)
 		if !ok {
 			continue // no affinity attached is expected when Produce returns early
 		}

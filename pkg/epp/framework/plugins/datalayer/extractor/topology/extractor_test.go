@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ const (
 )
 
 func readTopology(ep fwkdl.Endpoint) (*attrtopology.Topology, bool) {
-	dk := attrtopology.TopologyAttributeKey.WithNonEmptyProducerName(testPluginName).String()
+	dk := attrtopology.TopologyAttributeKey.WithNonEmptyProducerName(testPluginName)
 	raw, ok := ep.GetAttributes().Get(dk)
 	if !ok {
 		return nil, false
