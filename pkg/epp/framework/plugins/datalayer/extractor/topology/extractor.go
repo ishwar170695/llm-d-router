@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -86,6 +86,10 @@ type TopologyExtractor struct {
 	zoneLabel     string
 	regionLabel   string
 	dk            fwkplugin.DataKey
+	// slot pins the Topology value type at construction so a future change
+	// to the declared type surfaces at the assignment boundary, not in
+	// downstream readers.
+	slot *fwkdl.Slot[*attrtopology.Topology]
 
 	// mu guards endpoints and hostnames.
 	mu sync.Mutex
@@ -129,6 +133,7 @@ func Factory(name string, parameters *json.Decoder, _ fwkplugin.Handle) (fwkplug
 		zoneLabel:     p.Zone,
 		regionLabel:   p.Region,
 		dk:            attrtopology.TopologyAttributeKey.WithNonEmptyProducerName(name),
+		slot:          fwkdl.NewSlot[*attrtopology.Topology](attrtopology.TopologyAttributeKey.WithNonEmptyProducerName(name)),
 		endpoints:     make(map[types.NamespacedName]map[types.NamespacedName]fwkdl.Endpoint),
 		hostnames:     make(map[types.NamespacedName]string),
 	}, nil
@@ -137,6 +142,14 @@ func Factory(name string, parameters *json.Decoder, _ fwkplugin.Handle) (fwkplug
 // TypedName returns the plugin type and name.
 func (e *TopologyExtractor) TypedName() fwkplugin.TypedName {
 	return e.typedName
+}
+
+var _ fwkplugin.ProducerPlugin = &TopologyExtractor{}
+
+// Produces declares the Topology attribute both of this extractor's handlers
+// publish.
+func (e *TopologyExtractor) Produces() map[fwkplugin.DataKey]any {
+	return map[fwkplugin.DataKey]any{e.dk: attrtopology.Topology{}}
 }
 
 // RegisterDependencies wires this extractor to both an endpoint source and a Pod
@@ -218,7 +231,7 @@ func (h *endpointHandler) Extract(_ context.Context, event fwkdl.EndpointEvent) 
 	if hn == "" && rack == "" && zone == "" && region == "" {
 		return nil
 	}
-	event.Endpoint.GetAttributes().Put(h.ext.dk.String(), &attrtopology.Topology{
+	h.ext.slot.Put(event.Endpoint.GetAttributes(), &attrtopology.Topology{
 		Hostname: hn,
 		Rack:     rack,
 		Zone:     zone,
@@ -288,14 +301,14 @@ func (h *podNotificationHandler) Extract(_ context.Context, event fwkdl.Notifica
 	for _, ep := range eps {
 		// Preserve rack/zone/region already set from the endpoint event.
 		topo := &attrtopology.Topology{Hostname: hostname}
-		if raw, ok := ep.GetAttributes().Get(h.ext.dk.String()); ok {
+		if raw, ok := ep.GetAttributes().Get(h.ext.dk); ok {
 			if existing, ok := raw.(*attrtopology.Topology); ok {
 				topo.Rack = existing.Rack
 				topo.Zone = existing.Zone
 				topo.Region = existing.Region
 			}
 		}
-		ep.GetAttributes().Put(h.ext.dk.String(), topo)
+		h.ext.slot.Put(ep.GetAttributes(), topo)
 	}
 	return nil
 }

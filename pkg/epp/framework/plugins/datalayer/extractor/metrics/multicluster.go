@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ type multiClusterMetricsExtractorParams struct {
 
 type poolMetric struct {
 	spec *Spec
-	key  string
+	key  fwkplugin.DataKey
 }
 
 // MultiClusterMetricsExtractor writes a pool's aggregate KV-cache utilization and queue
@@ -70,8 +70,8 @@ func NewMultiClusterMetricsExtractor(name string, params *multiClusterMetricsExt
 	return &MultiClusterMetricsExtractor{
 		typedName: fwkplugin.TypedName{Type: MultiClusterMetricsExtractorType, Name: name},
 		metrics: []poolMetric{
-			{spec: kvSpec, key: attrmetrics.MultiClusterKVCacheUtilizationKey},
-			{spec: queueSpec, key: attrmetrics.MultiClusterQueueSizeKey},
+			{spec: kvSpec, key: attrmetrics.MultiClusterKVCacheUtilizationDataKey},
+			{spec: queueSpec, key: attrmetrics.MultiClusterQueueSizeDataKey},
 		},
 	}, nil
 }
@@ -82,6 +82,12 @@ func (e *MultiClusterMetricsExtractor) TypedName() fwkplugin.TypedName {
 
 // Extract writes each pool aggregate to its attribute. A missing metric is reported
 // but does not stop the others.
+//
+// Writes through the bare attribute key, not a *Slot, because the DataKey
+// form here (NewDataKey(key, "")) would String() to "key/" with a trailing
+// slash, and downstream readers (the multicluster scorers, the tests) look
+// up the bare key. The slot's typed Put would silently miss. Leaving as a
+// string-keyed write until the DataKey convention is unified.
 func (e *MultiClusterMetricsExtractor) Extract(_ context.Context, in fwkdl.PollInput[sourcemetrics.PrometheusMetricMap]) error {
 	ep := in.Endpoint
 	var errs []error
@@ -103,7 +109,7 @@ var _ fwkplugin.ProducerPlugin = &MultiClusterMetricsExtractor{}
 func (e *MultiClusterMetricsExtractor) Produces() map[fwkplugin.DataKey]any {
 	out := make(map[fwkplugin.DataKey]any, len(e.metrics))
 	for _, m := range e.metrics {
-		out[fwkplugin.NewDataKey(m.key, "")] = attrmetrics.ScalarMetricValue(0)
+		out[m.key] = attrmetrics.ScalarMetricValue(0)
 	}
 	return out
 }

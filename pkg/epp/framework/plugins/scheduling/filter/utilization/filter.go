@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -216,7 +216,7 @@ func (f *UtilizationFilter) metricValue(ctx context.Context, endpoint scheduling
 }
 
 func (f *UtilizationFilter) activeRequestCount(ctx context.Context, endpoint scheduling.Endpoint) int64 {
-	val, ok := endpoint.Get(f.inFlightLoadDataKey.String())
+	val, ok := endpoint.Get(f.inFlightLoadDataKey)
 	if !ok {
 		return 0
 	}

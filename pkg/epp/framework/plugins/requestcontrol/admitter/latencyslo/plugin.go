@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -141,7 +142,7 @@ func (p *LatencyAdmission) Admit(ctx context.Context, request *fwksched.Inferenc
 		}
 
 		// Valid prediction: both TTFT and TPOT within SLO.
-		if latencyInfoRaw, ok := endpoint.Get(p.latencyPredictionInfoDataKey.String()); ok {
+		if latencyInfoRaw, ok := endpoint.Get(p.latencyPredictionInfoDataKey); ok {
 			hasPredictions = true
 			latencyInfo := latencyInfoRaw.(*attrlatency.LatencyPredictionInfo)
 			if latencyInfo.IsValid() {

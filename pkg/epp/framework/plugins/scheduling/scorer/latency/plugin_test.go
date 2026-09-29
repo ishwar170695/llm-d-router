@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,7 +41,7 @@ func makeLatencyScorerEndpoint(name string, kvCache float64, queueSize, runningR
 }
 
 func setLatencyPrediction(ep fwksched.Endpoint, ttftValid, tpotValid bool, ttftHeadroom, tpotHeadroom, ttft, tpot float64) {
-	ep.Put(attrlatency.LatencyPredictionInfoDataKey.String(),
+	ep.Put(attrlatency.LatencyPredictionInfoDataKey,
 		attrlatency.NewLatencyPredictionInfo(ttftValid, tpotValid, ttftHeadroom, tpotHeadroom, ttft, tpot, 0))
 }
 
@@ -140,9 +141,9 @@ func TestScoreIdlePodPreference(t *testing.T) {
 
 	// Same predictions — both negative, same deficit.
 	// Use dispatch count for idle detection (matches EPP internal queue).
-	epBusy.Put(attrlatency.LatencyPredictionInfoDataKey.String(),
+	epBusy.Put(attrlatency.LatencyPredictionInfoDataKey,
 		attrlatency.NewLatencyPredictionInfo(false, false, -50, -10, 150, 40, 5))
-	epIdle.Put(attrlatency.LatencyPredictionInfoDataKey.String(),
+	epIdle.Put(attrlatency.LatencyPredictionInfoDataKey,
 		attrlatency.NewLatencyPredictionInfo(false, false, -50, -10, 150, 40, 0))
 
 	endpoints := []fwksched.Endpoint{epBusy, epIdle}

@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -162,7 +163,7 @@ func (s *Plugin) Score(ctx context.Context, _ *fwksched.InferenceRequest, endpoi
 	hasPredictions := false
 	for _, ep := range endpoints {
 		d := epData{endpoint: ep}
-		if raw, ok := ep.Get(s.latencyPredictionInfoDataKey.String()); ok {
+		if raw, ok := ep.Get(s.latencyPredictionInfoDataKey); ok {
 			info := raw.(*attrlatency.LatencyPredictionInfo)
 			d.info = info
 			d.ttftHeadroom = info.TTFTHeadroom()
@@ -393,7 +394,7 @@ func normalizedWeights(a, b float64) (float64, float64) {
 }
 
 func (s *Plugin) prefixCacheScore(ep fwksched.Endpoint) float64 {
-	if raw, ok := ep.Get(s.prefixMatchDataKey.String()); ok {
+	if raw, ok := ep.Get(s.prefixMatchDataKey); ok {
 		info := raw.(*attrprefix.PrefixCacheMatchInfo)
 		if info.TotalBlocks() > 0 {
 			score := float64(info.MatchBlocks()) / float64(info.TotalBlocks())

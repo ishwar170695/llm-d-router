@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -66,8 +67,8 @@ func TestProduce_CapturesEncoderCacheSizes(t *testing.T) {
 	unmatched := createTestEndpoint("pod-unmatched", 0.1, 0, 0)
 
 	items := []attrmm.MatchItem{{Hash: "img-a", Size: 1}, {Hash: "img-b", Size: 1}}
-	matched.Put(pl.encoderCacheDataKey.String(), attrmm.NewEncoderCacheMatchInfo(items[:1], items))
-	unmatched.Put(pl.encoderCacheDataKey.String(), attrmm.NewEncoderCacheMatchInfo(nil, items))
+	matched.Put(pl.encoderCacheDataKey, attrmm.NewEncoderCacheMatchInfo(items[:1], items))
+	unmatched.Put(pl.encoderCacheDataKey, attrmm.NewEncoderCacheMatchInfo(nil, items))
 
 	require.NoError(t, pl.Produce(context.Background(), request, []fwksched.Endpoint{matched, unmatched}))
 
@@ -92,7 +93,7 @@ func TestProduce_ClampsInconsistentEncoderMatchData(t *testing.T) {
 
 	matched := []attrmm.MatchItem{{Hash: "img-a", Size: 3}}
 	requestItems := []attrmm.MatchItem{{Hash: "img-b", Size: 1}}
-	endpoint.Put(pl.encoderCacheDataKey.String(), attrmm.NewEncoderCacheMatchInfo(matched, requestItems))
+	endpoint.Put(pl.encoderCacheDataKey, attrmm.NewEncoderCacheMatchInfo(matched, requestItems))
 
 	require.NoError(t, pl.Produce(context.Background(), request, []fwksched.Endpoint{endpoint}))
 
@@ -112,7 +113,7 @@ func TestProduce_EncoderCacheFeatureDisabledIgnoresMatchData(t *testing.T) {
 	request := createTestInferenceRequest("encoder-disabled-test", 0, 0)
 	endpoint := createTestEndpoint("pod-a", 0.1, 0, 0)
 	items := []attrmm.MatchItem{{Hash: "img-a", Size: 1}}
-	endpoint.Put(pl.encoderCacheDataKey.String(), attrmm.NewEncoderCacheMatchInfo(items, items))
+	endpoint.Put(pl.encoderCacheDataKey, attrmm.NewEncoderCacheMatchInfo(items, items))
 
 	require.NoError(t, pl.Produce(context.Background(), request, []fwksched.Endpoint{endpoint}))
 

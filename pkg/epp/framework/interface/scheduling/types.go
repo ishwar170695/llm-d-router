@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,6 +24,7 @@ import (
 	"sync"
 
 	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
+	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
 )
 
@@ -32,7 +34,7 @@ type Modality = fwkrh.Modality
 
 const ModalityImage = fwkrh.ModalityImage
 
-type TokenizedPrompt = fwkrh.TokenizedPrompt
+type TokenizedRequest = fwkrh.TokenizedRequest
 
 type MultiModalFeature = fwkrh.MultiModalFeature
 
@@ -79,9 +81,9 @@ type Endpoint interface {
 	GetMetadata() *fwkdl.EndpointMetadata
 	GetMetrics() *fwkdl.Metrics
 	String() string
-	Get(string) (fwkdl.Cloneable, bool)
-	Put(string, fwkdl.Cloneable)
-	Keys() []string
+	Get(fwkplugin.DataKey) (fwkdl.Cloneable, bool)
+	Put(fwkplugin.DataKey, fwkdl.Cloneable)
+	Keys() []fwkplugin.DataKey
 	Clone() fwkdl.AttributeMap
 }
 

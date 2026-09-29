@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,7 +19,9 @@ package scheduling
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -26,7 +29,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 
+	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
+	"github.com/llm-d/llm-d-router/pkg/epp/datalayer"
 	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
+	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwksched "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker/maxscore"
@@ -44,6 +50,9 @@ func TestSchedule(t *testing.T) {
 	prefixCacheScorer, err := schedprefix.New(context.Background(), schedprefix.PrefixCacheScorerPluginType, "approx-prefix-cache-producer")
 	assert.NoError(t, err)
 	loraAffinityScorer := loraaffinity.NewLoraAffinityScorer()
+	datalayer.RegisterScopeSpecs([]fwkplugin.Plugin{
+		kvCacheUtilizationScorer, queueingScorer, prefixCacheScorer, loraAffinityScorer,
+	})
 
 	defaultProfile := NewSchedulerProfile().
 		WithScorers(NewWeightedScorer(kvCacheUtilizationScorer, 1),
@@ -56,6 +65,7 @@ func TestSchedule(t *testing.T) {
 	profileHandler := single.NewSingleProfileHandler()
 
 	schedulerConfig := NewSchedulerConfig(profileHandler, map[string]fwksched.SchedulerProfile{"default": defaultProfile})
+	scrapedAt := time.Now()
 
 	tests := []struct {
 		name    string
@@ -93,6 +103,7 @@ func TestSchedule(t *testing.T) {
 							"foo": 1,
 							"bar": 1,
 						},
+						UpdateTime: scrapedAt,
 					}, nil),
 				fwksched.NewEndpoint(
 					&fwkdl.EndpointMetadata{ID: k8stypes.NamespacedName{Name: "pod2"}},
@@ -104,6 +115,7 @@ func TestSchedule(t *testing.T) {
 							"foo":      1,
 							"critical": 1,
 						},
+						UpdateTime: scrapedAt,
 					}, nil),
 				fwksched.NewEndpoint(
 					&fwkdl.EndpointMetadata{ID: k8stypes.NamespacedName{Name: "pod3"}},
@@ -114,6 +126,7 @@ func TestSchedule(t *testing.T) {
 						ActiveModels: map[string]int{
 							"foo": 1,
 						},
+						UpdateTime: scrapedAt,
 					}, nil),
 			},
 			wantRes: &fwksched.SchedulingResult{
@@ -131,6 +144,7 @@ func TestSchedule(t *testing.T) {
 											"foo":      1,
 											"critical": 1,
 										},
+										UpdateTime: scrapedAt,
 									}, nil),
 								Score: 2.8,
 							},
@@ -158,4 +172,34 @@ func TestSchedule(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScheduleFilterDrainReturnsTypedError(t *testing.T) {
+	drainingFilter := &testPlugin{typedName: fwkplugin.TypedName{Type: "drain-filter", Name: "drain-filter"}} // empty FilterRes drops every endpoint
+
+	profile := NewSchedulerProfile().
+		WithFilters(drainingFilter).
+		WithPicker(maxscore.NewMaxScorePicker(picker.DefaultMaxNumOfEndpoints))
+
+	schedulerConfig := NewSchedulerConfig(single.NewSingleProfileHandler(), map[string]fwksched.SchedulerProfile{"default": profile})
+	scheduler := NewSchedulerWithConfig(schedulerConfig)
+
+	req := &fwksched.InferenceRequest{
+		RequestID:   uuid.NewString(),
+		TargetModel: "any-model",
+	}
+	input := []fwksched.Endpoint{
+		fwksched.NewEndpoint(&fwkdl.EndpointMetadata{ID: k8stypes.NamespacedName{Name: "pod1"}}, &fwkdl.Metrics{}, nil),
+	}
+
+	result, err := scheduler.Schedule(context.Background(), req, input)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	var typedErr errcommon.Error
+	if !errors.As(err, &typedErr) {
+		t.Fatalf("Schedule error is not an errcommon.Error: %v", err)
+	}
+	assert.Equal(t, errcommon.ServiceUnavailable, typedErr.Code)
+	assert.Equal(t, string(errcommon.RequestDroppedReasonNoEndpoints), typedErr.Headers[errcommon.RequestDroppedReasonHeaderKey])
 }

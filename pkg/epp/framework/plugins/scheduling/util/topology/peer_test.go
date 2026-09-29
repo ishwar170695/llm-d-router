@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,13 +29,13 @@ import (
 )
 
 func TestPeerTopology_NilRequest(t *testing.T) {
-	_, ok := PeerTopology(nil, attrtopology.TopologyAttributeKey.String())
+	_, ok := PeerTopology(nil, attrtopology.TopologyAttributeKey)
 	assert.False(t, ok)
 }
 
 func TestPeerTopology_NoPeerAttribute(t *testing.T) {
 	req := &fwksched.InferenceRequest{}
-	_, ok := PeerTopology(req, attrtopology.TopologyAttributeKey.String())
+	_, ok := PeerTopology(req, attrtopology.TopologyAttributeKey)
 	assert.False(t, ok)
 }
 
@@ -43,12 +43,12 @@ func TestPeerTopology_FromPeerEndpointAttribute(t *testing.T) {
 	meta := &fwkdl.EndpointMetadata{ID: types.NamespacedName{Name: "peer", Namespace: "default"}}
 	peerEndpoint := fwksched.NewEndpoint(meta, &fwkdl.Metrics{}, fwkdl.NewAttributes())
 	topo := &attrtopology.Topology{Hostname: "h1"}
-	peerEndpoint.Put(attrtopology.TopologyAttributeKey.String(), topo)
+	peerEndpoint.Put(attrtopology.TopologyAttributeKey, topo)
 
 	req := &fwksched.InferenceRequest{}
 	req.PutAttribute(disagg.PeerEndpointAttributeKey, peerEndpoint)
 
-	got, ok := PeerTopology(req, attrtopology.TopologyAttributeKey.String())
+	got, ok := PeerTopology(req, attrtopology.TopologyAttributeKey)
 	assert.True(t, ok)
 	assert.Equal(t, topo, got)
 }
@@ -60,6 +60,6 @@ func TestPeerTopology_PeerEndpointMissingTopologyAttribute(t *testing.T) {
 	req := &fwksched.InferenceRequest{}
 	req.PutAttribute(disagg.PeerEndpointAttributeKey, peerEndpoint)
 
-	_, ok := PeerTopology(req, attrtopology.TopologyAttributeKey.String())
+	_, ok := PeerTopology(req, attrtopology.TopologyAttributeKey)
 	assert.False(t, ok)
 }

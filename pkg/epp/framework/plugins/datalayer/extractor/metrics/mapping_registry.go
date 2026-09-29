@@ -1,5 +1,6 @@
 /*
 Copyright 2026 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +20,8 @@ package metrics
 import (
 	"errors"
 	"fmt"
+
+	fwkplugins "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins"
 )
 
 const (
@@ -26,7 +29,7 @@ const (
 	DefaultEngineType = "default"
 
 	// DefaultEngineTypeLabelKey is the default label on Pods that indicates the inference engine type.
-	DefaultEngineTypeLabelKey = "llm-d.ai/engine-type"
+	DefaultEngineTypeLabelKey = fwkplugins.EngineTypeLabelKey
 
 	// legacyGAIEEngineTypeLabelKey is the legacy GAIE label key, kept for backward compatibility.
 	//
@@ -62,6 +65,16 @@ func (r *MappingRegistry) Register(engineType string, mapping *Mapping) error {
 	}
 	r.mappings[engineType] = mapping
 	return nil
+}
+
+// Mappings returns every registered mapping, for callers that must describe the
+// registry as a whole rather than resolve one engine.
+func (r *MappingRegistry) Mappings() []*Mapping {
+	mappings := make([]*Mapping, 0, len(r.mappings))
+	for _, mapping := range r.mappings {
+		mappings = append(mappings, mapping)
+	}
+	return mappings
 }
 
 // Get finds the mapping for the given engine type, falling back to "default" if not found.

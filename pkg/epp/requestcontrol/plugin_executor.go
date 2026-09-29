@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,6 +23,9 @@ import (
 	"fmt"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/llm-d/llm-d-router/pkg/epp/datalayer"
 	fwkrc "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requestcontrol"
 	fwksched "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/scheduling"
 	"github.com/llm-d/llm-d-router/pkg/epp/metrics"
@@ -31,11 +35,16 @@ import (
 // So, a plugin is executed only after all its dependencies have been executed.
 // If there is a cycle or any plugin fails with error, it returns an error.
 func executePluginsAsDAG(ctx context.Context, plugins []fwkrc.DataProducer, request *fwksched.InferenceRequest, endpoints []fwksched.Endpoint) error {
+	logger := log.FromContext(ctx)
 	for _, plugin := range plugins {
+		scoped, violations := datalayer.Scope(logger, fwkrc.DataProducerExtensionPoint, plugin, endpoints)
 		before := time.Now()
-		err := plugin.Produce(ctx, request, endpoints)
+		err := plugin.Produce(ctx, request, scoped)
 		metrics.RecordPluginProcessingLatency(fwkrc.DataProducerExtensionPoint, plugin.TypedName().Type, plugin.TypedName().Name, time.Since(before))
 		if err != nil {
+			return fmt.Errorf("DataProducer %q failed: %w", plugin.TypedName().String(), err)
+		}
+		if err := violations.Write(); err != nil {
 			return fmt.Errorf("DataProducer %q failed: %w", plugin.TypedName().String(), err)
 		}
 	}
@@ -58,6 +67,10 @@ func producerTimeout(p fwkrc.DataProducer) time.Duration {
 // (e.g. abort outbound HTTP calls) and avoid committing state after the director has moved on.
 func dataProducerPluginsWithTimeout(ctx context.Context, timeout time.Duration, plugins []fwkrc.DataProducer,
 	request *fwksched.InferenceRequest, endpoints []fwksched.Endpoint) error {
+	// The timeout path does not join the producer goroutine. Allocate the
+	// sync.Map before launching it so any cancellation-aware producer finishing
+	// a write cannot race with scheduling over lazy store initialization.
+	request.InitializeAttributeStore()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

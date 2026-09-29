@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,7 +36,7 @@ func makeEndpoint(name string, ttftHeadroom, tpotHeadroom float64, hasPrediction
 	}
 	ep := fwksched.NewEndpoint(meta, &fwkdl.Metrics{}, fwkdl.NewAttributes())
 	if hasPrediction {
-		ep.Put(attrlatency.LatencyPredictionInfoDataKey.String(), attrlatency.NewLatencyPredictionInfo(
+		ep.Put(attrlatency.LatencyPredictionInfoDataKey, attrlatency.NewLatencyPredictionInfo(
 			ttftHeadroom >= 0, tpotHeadroom >= 0, ttftHeadroom, tpotHeadroom, 100, 10, 0))
 	}
 	return ep
