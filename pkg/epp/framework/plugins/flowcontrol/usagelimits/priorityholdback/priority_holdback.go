@@ -82,20 +82,16 @@ type priorityHoldbackPolicy struct {
 	// because the operator already supplied the ceiling for that priority.
 	enableSinglePriorityBypass bool
 
-	domain   string
-	ceilings map[int]float64
-	anchors  []explicitAnchor
+	anchors []explicitAnchor
 }
 
 var _ flowcontrol.UsageLimitPolicy = &priorityHoldbackPolicy{}
 
 func newPriorityHoldbackPolicy(cfg config) *priorityHoldbackPolicy {
 	p := &priorityHoldbackPolicy{
-		name:     PolicyType,
-		cMax:     cfg.maxCeiling,
-		cMin:     cfg.minCeiling,
-		domain:   cfg.domain,
-		ceilings: cfg.ceilings,
+		name: PolicyType,
+		cMax: cfg.maxCeiling,
+		cMin: cfg.minCeiling,
 	}
 	switch cfg.domain {
 	case DomainRank:
@@ -116,14 +112,6 @@ func newPriorityHoldbackPolicy(cfg config) *priorityHoldbackPolicy {
 		}
 	}
 	return p
-}
-
-func (p *priorityHoldbackPolicy) Domain() string {
-	return p.domain
-}
-
-func (p *priorityHoldbackPolicy) Ceilings() map[int]float64 {
-	return p.ceilings
 }
 
 func (p *priorityHoldbackPolicy) withName(name string) *priorityHoldbackPolicy {

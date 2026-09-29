@@ -178,7 +178,7 @@ func TestComputeLimit_EmptyPriorities(t *testing.T) {
 		maxCeiling: 1.0,
 	})
 
-	ceilings := computeLimits(t, policy, 0.5, []int{})
+	ceilings := computeLimits(t, policy, []int{})
 	assert.Empty(t, ceilings)
 	assert.NotNil(t, ceilings, "should return empty slice, not nil")
 }
@@ -205,7 +205,7 @@ func TestComputeLimit_SinglePriority(t *testing.T) {
 				minCeiling: 0.5,
 				maxCeiling: tc.cMax,
 			})
-			ceilings := computeLimits(t, policy, 0.5, []int{10})
+			ceilings := computeLimits(t, policy, []int{10})
 			require.Len(t, ceilings, 1)
 			assert.Equal(t, tc.cMax, ceilings[0], "single priority should bypass holdback with cMax")
 		})
@@ -698,7 +698,7 @@ func TestComputeLimit_ExplicitDomain_SinglePriority(t *testing.T) {
 		ceilings: map[int]float64{100: 0.80},
 	})
 
-	ceilings := computeLimits(t, policy, 0.5, []int{100})
+	ceilings := computeLimits(t, policy, []int{100})
 	require.Len(t, ceilings, 1)
 	assert.InDelta(t, 0.80, ceilings[0], 1e-9,
 		"explicit domain single priority should return the configured ceiling, not cMax")
@@ -713,7 +713,7 @@ func TestComputeLimit_ExplicitDomain_InterpolatesAndClamps(t *testing.T) {
 
 	// 120 (clamped to 0.95), 100 (exact 0.95), 75 (interpolated 0.825),
 	// 50 (exact 0.70), 30 (interpolated 0.50), 10 (exact 0.30), 0 (clamped to 0.30)
-	ceilings := computeLimits(t, policy, 0.5, []int{120, 100, 75, 50, 30, 10, 0})
+	ceilings := computeLimits(t, policy, []int{120, 100, 75, 50, 30, 10, 0})
 	require.Len(t, ceilings, 7)
 	assert.InDelta(t, 0.95, ceilings[0], 1e-9)
 	assert.InDelta(t, 0.95, ceilings[1], 1e-9)
@@ -731,7 +731,7 @@ func TestComputeLimit_ExplicitDomain_SingleAnchor_MultiplePriorities(t *testing.
 		ceilings: map[int]float64{50: 0.80},
 	})
 
-	ceilings := computeLimits(t, policy, 0.5, []int{100, 50, 0})
+	ceilings := computeLimits(t, policy, []int{100, 50, 0})
 	require.Len(t, ceilings, 3)
 	for i, c := range ceilings {
 		assert.InDelta(t, 0.80, c, 1e-9, "ceiling at index %d should match single anchor", i)
@@ -745,7 +745,7 @@ func TestComputeLimit_ExplicitDomain_EmptyPriorities(t *testing.T) {
 		ceilings: map[int]float64{100: 0.95},
 	})
 
-	ceilings := computeLimits(t, policy, 0.5, []int{})
+	ceilings := computeLimits(t, policy, []int{})
 	assert.Empty(t, ceilings)
 }
 
@@ -758,13 +758,13 @@ func ptrFloat(f float64) *float64 { return &f }
 
 // computeLimits invokes ComputeLimit with a framework-style output buffer (pre-filled with 1.0,
 // sized to priorities) and returns the filled ceilings.
-func computeLimits(t *testing.T, p *priorityHoldbackPolicy, saturation float64, priorities []int) []float64 {
+func computeLimits(t *testing.T, p *priorityHoldbackPolicy, priorities []int) []float64 {
 	t.Helper()
 	ceilings := make([]float64, len(priorities))
 	for i := range ceilings {
 		ceilings[i] = 1.0
 	}
-	p.ComputeLimit(t.Context(), saturation, priorities, ceilings)
+	p.ComputeLimit(t.Context(), 0.0, priorities, ceilings)
 	return ceilings
 }
 
