@@ -1,8 +1,6 @@
 {{- define "llm-d-epp.hpa" -}}
 {{- $autoscaling := .Values.router.epp.autoscaling | default dict -}}
-{{- $isPriorityRouting := eq (include "llm-d-router.priorityRouting.enabled" .) "true" -}}
-{{- $gkePB := include "llm-d-router.gkePreferredBackends" . | fromYaml | default dict -}}
-{{- if and $autoscaling.enabled (not $isPriorityRouting) (not $gkePB.enabled) -}}
+{{- if $autoscaling.enabled -}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

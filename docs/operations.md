@@ -221,20 +221,20 @@ router:
 
 ### Horizontal Pod Autoscaling (HPA)
 
-EPP supports dynamic horizontal pod autoscaling via Kubernetes `HorizontalPodAutoscaler` (HPA v2). When autoscaling is enabled, Helm omits `spec.replicas` on the EPP Deployment, delegating replica count management to the HPA controller.
+EPP supports horizontal pod autoscaling through Kubernetes HorizontalPodAutoscaler (HPA v2). When autoscaling is enabled, Helm omits `spec.replicas` on the EPP Deployment, and the HPA controller manages replica counts.
 
 #### Operational Prerequisites and Constraints
 
 - **Active-Active Mode Required**: Autoscaling requires Active-Active EPP operation. Standby replicas in leader-elected setups remain `NotReady` by design, which blocks HPA stabilization. The chart enforces active-active mode when autoscaling is enabled and blocks explicit leader election (`--ha-enable-leader-election`).
-- **Incompatible with Priority Routing**: Priority routing relies on fixed ordinal hostnames (`<name>-0`, `<name>-1`) in Envoy. Enabling autoscaling alongside `router.proxy.priorityRouting.enabled: true` or GKE preferred backends fails chart validation.
-- **RollingUpdate Strategy**: The deployment defaults to `RollingUpdate` strategy (`maxUnavailable: 0`, `maxSurge: 1`) under autoscaling to maintain serving capacity during scale events.
+- **Incompatible with StatefulSet Topologies**: Priority routing and GKE preferred backends render EPP as a StatefulSet with fixed ordinal hostnames (`<name>-0`, `<name>-1`) for static Envoy routing. Autoscaling requires a standard Deployment managing a dynamically changing replica set in active-active mode. Enabling autoscaling alongside `router.proxy.priorityRouting.enabled: true` or GKE preferred backends fails chart validation.
+- **RollingUpdate Strategy**: The deployment defaults to `RollingUpdate` strategy (`maxUnavailable: 0`, `maxSurge: 1`) under autoscaling to keep serving capacity during scale events. Setting `router.epp.deploymentStrategy` overrides this default.
+- **Replica Count Configuration**: When autoscaling is enabled, `router.epp.replicas` is ignored. Replica counts are controlled by `autoscaling.minReplicas` and `autoscaling.maxReplicas`.
 - **Prefix Cache Consideration**: As noted in the Active-Active sizing section, prefix state is not synchronized across replicas. Autoscaling should be paired with session affinity or stateless schedulers (`random-picker`, `session-affinity-filter`).
 
 #### Target Utilization Guidance
 
-- **Target CPU Utilization**: The recommended default is **80%**.
-- **Burst Buffer**: At 80% utilization with 8-core CPU requests, each replica retains approximately 1.6 cores of headroom to absorb traffic spikes while new pods initialize and pass readiness probes. Above 85% saturation, Go runtime scheduler latency increases.
-- **Container Sizing**: Set container CPU requests equal to expected steady-state per-pod load (for example, `8` cores for 10 QPS under large prefix workloads).
+- **Target CPU Utilization**: The recommended starting default is **80%**. This leaves headroom to absorb traffic spikes while new pods initialize and pass readiness probes. Higher utilization leaves less headroom for traffic bursts while new pods start up. Operators should tune this target based on their workload shape, token lengths, and latency SLAs.
+- **Container Sizing**: Set container CPU requests based on expected steady-state per-pod load (refer to the sizing guidelines in Section 1 for CPU core-to-throughput estimates).
 
 #### Helm Configuration
 
@@ -266,5 +266,5 @@ router:
 | `router.epp.autoscaling.targetCPUUtilizationPercentage` | `80` | Target average CPU utilization percentage across pods. |
 | `router.epp.autoscaling.targetMemoryUtilizationPercentage` | `nil` | Optional target average memory utilization percentage. |
 | `router.epp.autoscaling.behavior` | `{}` | Optional HPA scaling behavior rules (stabilization windows, rate limits). |
-| `router.epp.autoscaling.metrics` | `[]` | Optional custom Kubernetes HPA metric specifications. |
+| `router.epp.autoscaling.metrics` | `[]` | Optional custom Kubernetes HPA metric specifications. When specified, overrides automatically generated CPU/memory metrics. |
 

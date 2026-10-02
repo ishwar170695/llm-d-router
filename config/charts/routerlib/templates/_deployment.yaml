@@ -366,6 +366,9 @@ spec:
     {{- else }}
     {{- if $autoscaling.enabled }}
     type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
     {{- else }}
     # The current recommended EPP deployment pattern is to have a single active replica. This ensures
     # optimal performance of the stateful operations such prefix cache aware scorer.
