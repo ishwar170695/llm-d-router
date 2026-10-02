@@ -493,12 +493,39 @@ Helper to check if priorityRouting is enabled across chart contexts.
 {{- add $primary $standby -}}
 {{- end -}}
 
+{{- define "llm-d-router.validations.epp.autoscaling" -}}
+{{- $autoscaling := .Values.router.epp.autoscaling | default dict -}}
+{{- if $autoscaling.enabled }}
+  {{- $isPriorityRouting := eq (include "llm-d-router.priorityRouting.enabled" .) "true" -}}
+  {{- if $isPriorityRouting }}
+    {{- fail "EPP autoscaling (.Values.router.epp.autoscaling.enabled=true) is not supported when priority routing is enabled (router.proxy.priorityRouting.enabled=true)" }}
+  {{- end }}
+  {{- $gkePB := include "llm-d-router.gkePreferredBackends" . | fromYaml | default dict -}}
+  {{- if $gkePB.enabled }}
+    {{- fail "EPP autoscaling (.Values.router.epp.autoscaling.enabled=true) is not supported when GKE preferredBackends is enabled" }}
+  {{- end }}
+  {{- $eppFlags := .Values.router.epp.flags | default dict -}}
+  {{- if regexMatch "^(1|t|T|true|TRUE|True)$" (toString (index $eppFlags "ha-enable-leader-election")) }}
+    {{- fail "EPP autoscaling requires active-active replicas: router.epp.flags.ha-enable-leader-election cannot be true when router.epp.autoscaling.enabled=true" }}
+  {{- end }}
+  {{- $minReplicas := $autoscaling.minReplicas | default 1 | int }}
+  {{- $maxReplicas := $autoscaling.maxReplicas | default 5 | int }}
+  {{- if lt $minReplicas 1 }}
+    {{- fail ".Values.router.epp.autoscaling.minReplicas must be at least 1" }}
+  {{- end }}
+  {{- if lt $maxReplicas $minReplicas }}
+    {{- fail ".Values.router.epp.autoscaling.maxReplicas must be greater than or equal to minReplicas" }}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
 {{- define "llm-d-router.validations.epp" -}}
 {{- include "llm-d-router.validations.deprecations" . }}
 {{- include "llm-d-router.validations.epp.resources" . }}
 {{- include "llm-d-router.validations.epp.inferenceObjectives" . }}
 {{- include "llm-d-router.validations.epp.tokenizer" . }}
 {{- include "llm-d-router.validations.epp.preferredBackends" . }}
+{{- include "llm-d-router.validations.epp.autoscaling" . }}
 {{- $isPriorityRouting := eq (include "llm-d-router.priorityRouting.enabled" .) "true" -}}
 {{- if and $isPriorityRouting (ne (include "llm-d-router.proxyMode" .) "service") -}}
 {{- fail "priorityRouting is only supported when proxy mode is set to 'service' (router.proxy.mode=service)" -}}

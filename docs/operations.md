@@ -218,3 +218,53 @@ router:
   proxy:
     failOpen: true
 ```
+
+### Horizontal Pod Autoscaling (HPA)
+
+EPP supports dynamic horizontal pod autoscaling via Kubernetes `HorizontalPodAutoscaler` (HPA v2). When autoscaling is enabled, Helm omits `spec.replicas` on the EPP Deployment, delegating replica count management to the HPA controller.
+
+#### Operational Prerequisites and Constraints
+
+- **Active-Active Mode Required**: Autoscaling requires Active-Active EPP operation. Standby replicas in leader-elected setups remain `NotReady` by design, which blocks HPA stabilization. The chart enforces active-active mode when autoscaling is enabled and blocks explicit leader election (`--ha-enable-leader-election`).
+- **Incompatible with Priority Routing**: Priority routing relies on fixed ordinal hostnames (`<name>-0`, `<name>-1`) in Envoy. Enabling autoscaling alongside `router.proxy.priorityRouting.enabled: true` or GKE preferred backends fails chart validation.
+- **RollingUpdate Strategy**: The deployment defaults to `RollingUpdate` strategy (`maxUnavailable: 0`, `maxSurge: 1`) under autoscaling to maintain serving capacity during scale events.
+- **Prefix Cache Consideration**: As noted in the Active-Active sizing section, prefix state is not synchronized across replicas. Autoscaling should be paired with session affinity or stateless schedulers (`random-picker`, `session-affinity-filter`).
+
+#### Target Utilization Guidance
+
+- **Target CPU Utilization**: The recommended default is **80%**.
+- **Burst Buffer**: At 80% utilization with 8-core CPU requests, each replica retains approximately 1.6 cores of headroom to absorb traffic spikes while new pods initialize and pass readiness probes. Above 85% saturation, Go runtime scheduler latency increases.
+- **Container Sizing**: Set container CPU requests equal to expected steady-state per-pod load (for example, `8` cores for 10 QPS under large prefix workloads).
+
+#### Helm Configuration
+
+```yaml
+router:
+  epp:
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 80
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+    resources:
+      requests:
+        cpu: "8"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 16Gi
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `router.epp.autoscaling.enabled` | `false` | Enable Kubernetes HPA for the EPP Deployment. |
+| `router.epp.autoscaling.minReplicas` | `1` | Lower replica bound for the autoscaler. |
+| `router.epp.autoscaling.maxReplicas` | `5` | Upper replica bound for the autoscaler. |
+| `router.epp.autoscaling.targetCPUUtilizationPercentage` | `80` | Target average CPU utilization percentage across pods. |
+| `router.epp.autoscaling.targetMemoryUtilizationPercentage` | `nil` | Optional target average memory utilization percentage. |
+| `router.epp.autoscaling.behavior` | `{}` | Optional HPA scaling behavior rules (stabilization windows, rate limits). |
+| `router.epp.autoscaling.metrics` | `[]` | Optional custom Kubernetes HPA metric specifications. |
+
