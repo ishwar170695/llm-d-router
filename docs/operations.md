@@ -229,7 +229,7 @@ EPP supports horizontal pod autoscaling through Kubernetes HorizontalPodAutoscal
 - **Incompatible with StatefulSet Topologies**: Priority routing and GKE preferred backends render EPP as a StatefulSet with fixed ordinal hostnames (`<name>-0`, `<name>-1`) for static Envoy routing. Autoscaling requires a standard Deployment managing a dynamically changing replica set in active-active mode. Enabling autoscaling alongside `router.proxy.priorityRouting.enabled: true` or GKE preferred backends fails chart validation.
 - **RollingUpdate Strategy**: The deployment defaults to `RollingUpdate` strategy (`maxUnavailable: 0`, `maxSurge: 1`) under autoscaling to keep serving capacity during scale events. Setting `router.epp.deploymentStrategy` overrides this default.
 - **Replica Count Configuration**: When autoscaling is enabled, `router.epp.replicas` is ignored. Replica counts are controlled by `autoscaling.minReplicas` and `autoscaling.maxReplicas`.
-- **Prefix Cache Consideration**: As noted in the Active-Active sizing section, prefix state is not synchronized across replicas. Autoscaling should be paired with session affinity or stateless schedulers (`random-picker`, `session-affinity-filter`).
+- **Prefix Cache Consideration**: Prefix state is not synchronized across replicas. Autoscaling should be paired with session affinity or stateless schedulers (`random-picker`, `session-affinity-filter`).
 
 #### Target Utilization Guidance
 
@@ -258,13 +258,5 @@ router:
         memory: 16Gi
 ```
 
-| Parameter | Default | Description |
-|---|---|---|
-| `router.epp.autoscaling.enabled` | `false` | Enable Kubernetes HPA for the EPP Deployment. |
-| `router.epp.autoscaling.minReplicas` | `1` | Lower replica bound for the autoscaler. |
-| `router.epp.autoscaling.maxReplicas` | `5` | Upper replica bound for the autoscaler. |
-| `router.epp.autoscaling.targetCPUUtilizationPercentage` | `80` | Target average CPU utilization percentage across pods. |
-| `router.epp.autoscaling.targetMemoryUtilizationPercentage` | `nil` | Optional target average memory utilization percentage. |
-| `router.epp.autoscaling.behavior` | `{}` | Optional HPA scaling behavior rules (stabilization windows, rate limits). |
-| `router.epp.autoscaling.metrics` | `[]` | Optional custom Kubernetes HPA metric specifications. When specified, overrides automatically generated CPU/memory metrics. |
+See `router.epp.autoscaling` in `config/charts/routerlib/values.yaml` for all fields and defaults.
 

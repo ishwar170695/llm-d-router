@@ -508,13 +508,34 @@ Helper to check if priorityRouting is enabled across chart contexts.
   {{- if regexMatch "^(1|t|T|true|TRUE|True)$" (toString (index $eppFlags "ha-enable-leader-election")) }}
     {{- fail "EPP autoscaling requires active-active replicas: router.epp.flags.ha-enable-leader-election cannot be true when router.epp.autoscaling.enabled=true" }}
   {{- end }}
-  {{- $minReplicas := $autoscaling.minReplicas | default 1 | int }}
-  {{- $maxReplicas := $autoscaling.maxReplicas | default 5 | int }}
-  {{- if lt $minReplicas 1 }}
-    {{- fail ".Values.router.epp.autoscaling.minReplicas must be at least 1" }}
+  {{- $minReplicas := 1 }}
+  {{- if hasKey $autoscaling "minReplicas" }}
+    {{- $minReplicas = int $autoscaling.minReplicas }}
+    {{- if lt $minReplicas 1 }}
+      {{- fail ".Values.router.epp.autoscaling.minReplicas must be at least 1" }}
+    {{- end }}
+  {{- end }}
+  {{- $maxReplicas := 5 }}
+  {{- if hasKey $autoscaling "maxReplicas" }}
+    {{- $maxReplicas = int $autoscaling.maxReplicas }}
+    {{- if lt $maxReplicas 1 }}
+      {{- fail ".Values.router.epp.autoscaling.maxReplicas must be at least 1" }}
+    {{- end }}
   {{- end }}
   {{- if lt $maxReplicas $minReplicas }}
     {{- fail ".Values.router.epp.autoscaling.maxReplicas must be greater than or equal to minReplicas" }}
+  {{- end }}
+  {{- if hasKey $autoscaling "targetCPUUtilizationPercentage" }}
+    {{- $cpu := int $autoscaling.targetCPUUtilizationPercentage }}
+    {{- if or (lt $cpu 1) (gt $cpu 100) }}
+      {{- fail ".Values.router.epp.autoscaling.targetCPUUtilizationPercentage must be between 1 and 100" }}
+    {{- end }}
+  {{- end }}
+  {{- if hasKey $autoscaling "targetMemoryUtilizationPercentage" }}
+    {{- $mem := int $autoscaling.targetMemoryUtilizationPercentage }}
+    {{- if or (lt $mem 1) (gt $mem 100) }}
+      {{- fail ".Values.router.epp.autoscaling.targetMemoryUtilizationPercentage must be between 1 and 100" }}
+    {{- end }}
   {{- end }}
 {{- end }}
 {{- end -}}

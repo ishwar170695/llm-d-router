@@ -278,156 +278,75 @@ for chart in llm-d-router-gateway llm-d-router-standalone; do
   verify_leader_election_rbac "${chart}" false --set router.epp.replicas=2 "${mode_flags[@]}"
   verify_leader_election_rbac "${chart}" true --set router.epp.replicas=2 "${mode_flags[@]}" --set router.epp.flags.ha-enable-leader-election=true
   verify_leader_election_rbac "${chart}" false --set router.epp.replicas=2 "${mode_flags[@]}" --set router.epp.flags.ha-enable-leader-election=false
+  verify_leader_election_rbac "${chart}" false --set router.epp.replicas=2 --set router.epp.autoscaling.enabled=true
   echo "Leader-election RBAC checks passed for ${chart}."
 done
 
 echo "Verifying EPP autoscaling (HPA) rendering and validations..."
+hpa_out="${TEMP_DIR}/hpa-render.yaml"
+hpa_deploy="${TEMP_DIR}/hpa-deployment.yaml"
+render() {
+  "${HELM}" template hpa "${SCRIPT_ROOT}/config/charts/${chart}" \
+    --set router.modelServers.matchLabels.app=test-app \
+    --set router.epp.autoscaling.enabled=true "${extra_args[@]}" "$@"
+}
+# Renders the chart and extracts the EPP Deployment document into ${hpa_deploy}.
+render_ok() {
+  render "$@" > "${hpa_out}" || { echo "${chart}: render failed: $*"; exit 1; }
+  awk 'BEGIN{RS="---"} (/\nkind: Deployment/ || /^kind: Deployment/) && /name: hpa-epp/ {print}' "${hpa_out}" > "${hpa_deploy}"
+  [ -s "${hpa_deploy}" ] || { echo "${chart}: EPP Deployment not rendered: $*"; exit 1; }
+}
+expect_fail() {
+  if render "$@" >/dev/null 2>&1; then echo "${chart}: expected failure for $*"; exit 1; fi
+}
+require() { grep -q -- "$1" "$2" || { echo "${chart}: expected '$1' in $2"; exit 1; }; }
+forbid() { ! grep -q -- "$1" "$2" || { echo "${chart}: unexpected '$1' in $2"; exit 1; }; }
+
 for chart in llm-d-router-gateway llm-d-router-standalone; do
-  hpa_render_output="${TEMP_DIR}/${chart}-hpa-render.yaml"
   extra_args=()
-  if [ "${chart}" == "llm-d-router-standalone" ]; then
-    extra_args+=(--set router.inferencePool.create=false)
-  fi
-
-  # 1. Autoscaling disabled: EPP Deployment spec.replicas is present, no HPA rendered
-  "${HELM}" template hpa-off "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  if ! grep -q 'replicas: 1' "${hpa_render_output}"; then
-    echo "${chart}: expected replicas: 1 when autoscaling is disabled"
-    exit 1
-  fi
-  if grep -q 'kind: HorizontalPodAutoscaler' "${hpa_render_output}"; then
-    echo "${chart}: unexpectedly rendered HPA when autoscaling is disabled"
-    exit 1
-  fi
-
-  # 2. Autoscaling enabled: HPA rendered, spec.replicas omitted, RollingUpdate defaults configured
-  "${HELM}" template hpa-on "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  if ! grep -q 'kind: HorizontalPodAutoscaler' "${hpa_render_output}"; then
-    echo "${chart}: expected HorizontalPodAutoscaler when autoscaling is enabled"
-    exit 1
-  fi
-  if ! grep -q 'minReplicas: 1' "${hpa_render_output}" || ! grep -q 'maxReplicas: 5' "${hpa_render_output}"; then
-    echo "${chart}: expected HPA minReplicas 1 and maxReplicas 5 default"
-    exit 1
-  fi
-  if ! grep -q 'name: hpa-on-epp' "${hpa_render_output}"; then
-    echo "${chart}: expected HPA scaleTargetRef to target EPP Deployment"
-    exit 1
-  fi
-  if ! grep -q 'averageUtilization: 80' "${hpa_render_output}"; then
-    echo "${chart}: expected HPA target 80% default"
-    exit 1
-  fi
-  if ! grep -q 'maxUnavailable: 0' "${hpa_render_output}" || ! grep -q 'maxSurge: 1' "${hpa_render_output}"; then
-    echo "${chart}: expected RollingUpdate maxUnavailable 0 and maxSurge 1 under autoscaling"
-    exit 1
-  fi
-  # Verify spec.replicas is omitted from EPP Deployment when autoscaling is enabled
-  if grep -q 'replicas:' "${hpa_render_output}"; then
-    echo "${chart}: spec.replicas must be omitted when autoscaling is enabled"
-    exit 1
-  fi
-  # Verify leader election flag is absent from EPP container args when autoscaling is enabled
-  if grep -q 'ha-enable-leader-election' "${hpa_render_output}"; then
-    echo "${chart}: unexpectedly found ha-enable-leader-election flag when autoscaling is enabled"
-    exit 1
-  fi
-
-  # 3. Autoscaling enabled: leader-election RBAC must not be rendered across the full chart
-  "${HELM}" template hpa-rbac "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  for name in hpa-rbac-epp-leader-election hpa-rbac-epp-leader-election-binding; do
-    if grep -q -- "^  name: ${name}$" "${hpa_render_output}"; then
-      echo "${chart}: leader-election RBAC ${name} must not exist when autoscaling is enabled"
-      exit 1
-    fi
-  done
-
-  # 4. deploymentStrategy override: setting custom strategy overrides autoscaling RollingUpdate defaults
-  "${HELM}" template hpa-strategy "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    --set router.epp.deploymentStrategy.type=Recreate \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  if ! grep -q 'type: Recreate' "${hpa_render_output}"; then
-    echo "${chart}: expected custom deploymentStrategy type: Recreate"
-    exit 1
-  fi
-  if grep -q 'maxSurge:' "${hpa_render_output}"; then
-    echo "${chart}: maxSurge must not appear when deploymentStrategy is overridden to Recreate"
-    exit 1
-  fi
-
-  # 5. Boundary test: minReplicas == maxReplicas renders valid HPA
-  "${HELM}" template hpa-equal "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    --set router.epp.autoscaling.minReplicas=3 \
-    --set router.epp.autoscaling.maxReplicas=3 \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  if ! grep -q 'minReplicas: 3' "${hpa_render_output}" || ! grep -q 'maxReplicas: 3' "${hpa_render_output}"; then
-    echo "${chart}: expected minReplicas: 3 and maxReplicas: 3"
-    exit 1
-  fi
-
-  # 6. HPA behavior: verify custom behavior block renders into HPA spec
-  "${HELM}" template hpa-behavior "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    --set router.epp.autoscaling.behavior.scaleDown.stabilizationWindowSeconds=300 \
-    "${extra_args[@]}" > "${hpa_render_output}"
-  if ! grep -q 'stabilizationWindowSeconds: 300' "${hpa_render_output}"; then
-    echo "${chart}: expected custom HPA scaleDown behavior"
-    exit 1
-  fi
-
-  # 7. Negative validations: priority routing, GKE preferred backends, explicit leader election, invalid replica bounds
-  if [ "${chart}" == "llm-d-router-standalone" ]; then
-    if "${HELM}" template "${SCRIPT_ROOT}/config/charts/${chart}" \
-      --set router.modelServers.matchLabels.app=test-app \
-      --set router.epp.autoscaling.enabled=true \
-      --set router.proxy.mode=service \
-      --set router.proxy.priorityRouting.enabled=true \
-      "${extra_args[@]}" >/dev/null 2>&1; then
-      echo "${chart}: expected failure for autoscaling with priority routing"
-      exit 1
-    fi
+  if [ "${chart}" == "llm-d-router-gateway" ]; then
+    mode_flags=(--set provider.name=gke --set provider.gke.preferredBackends.enabled=true)
   else
-    if "${HELM}" template "${SCRIPT_ROOT}/config/charts/${chart}" \
-      --set router.modelServers.matchLabels.app=test-app \
-      --set router.epp.autoscaling.enabled=true \
-      --set provider.name=gke \
-      --set provider.gke.preferredBackends.enabled=true >/dev/null 2>&1; then
-      echo "${chart}: expected failure for autoscaling with GKE preferred backends"
-      exit 1
-    fi
+    extra_args+=(--set router.inferencePool.create=false)
+    mode_flags=(--set router.proxy.mode=service --set router.proxy.priorityRouting.enabled=true)
   fi
 
-  if "${HELM}" template "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    --set router.epp.flags.ha-enable-leader-election=true \
-    "${extra_args[@]}" >/dev/null 2>&1; then
-    echo "${chart}: expected failure for autoscaling with explicit leader election"
-    exit 1
-  fi
+  render_ok --set router.epp.autoscaling.enabled=false
+  require '^  replicas: 1$' "${hpa_deploy}"
+  forbid 'kind: HorizontalPodAutoscaler' "${hpa_out}"
 
-  if "${HELM}" template "${SCRIPT_ROOT}/config/charts/${chart}" \
-    --set router.modelServers.matchLabels.app=test-app \
-    --set router.epp.autoscaling.enabled=true \
-    --set router.epp.autoscaling.minReplicas=5 \
-    --set router.epp.autoscaling.maxReplicas=2 \
-    "${extra_args[@]}" >/dev/null 2>&1; then
-    echo "${chart}: expected failure for minReplicas > maxReplicas"
-    exit 1
-  fi
+  render_ok
+  require 'kind: HorizontalPodAutoscaler' "${hpa_out}"
+  require 'minReplicas: 1' "${hpa_out}"
+  require 'maxReplicas: 5' "${hpa_out}"
+  require 'averageUtilization: 80' "${hpa_out}"
+  forbid '^  replicas:' "${hpa_deploy}"
+  require 'maxUnavailable: 0' "${hpa_deploy}"
+  require 'maxSurge: 1' "${hpa_deploy}"
+  forbid 'ha-enable-leader-election' "${hpa_deploy}"
+
+  render_ok --set router.epp.deploymentStrategy.type=Recreate
+  require 'type: Recreate' "${hpa_deploy}"
+  forbid 'maxSurge:' "${hpa_deploy}"
+
+  render_ok --set router.epp.autoscaling.minReplicas=3 --set router.epp.autoscaling.maxReplicas=3
+  require 'minReplicas: 3' "${hpa_out}"
+  require 'maxReplicas: 3' "${hpa_out}"
+
+  render_ok --set router.epp.autoscaling.behavior.scaleDown.stabilizationWindowSeconds=300
+  require 'stabilizationWindowSeconds: 300' "${hpa_out}"
+
+  expect_fail "${mode_flags[@]}"
+  expect_fail --set router.epp.flags.ha-enable-leader-election=true
+  expect_fail --set router.epp.autoscaling.minReplicas=5 --set router.epp.autoscaling.maxReplicas=2
+  for v in 0 -1; do
+    expect_fail --set router.epp.autoscaling.minReplicas="${v}"
+    expect_fail --set router.epp.autoscaling.maxReplicas="${v}"
+  done
+  for v in 0 101; do
+    expect_fail --set router.epp.autoscaling.targetCPUUtilizationPercentage="${v}"
+    expect_fail --set router.epp.autoscaling.targetMemoryUtilizationPercentage="${v}"
+  done
 
   echo "EPP autoscaling checks passed for ${chart}."
 done
