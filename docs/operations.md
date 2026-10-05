@@ -258,5 +258,5 @@ router:
         memory: 16Gi
 ```
 
-See `router.epp.autoscaling` in `config/charts/routerlib/values.yaml` for all fields and defaults.
+See `router.epp.autoscaling` in `config/charts/routerlib/values.yaml` for all fields and defaults. Custom metrics can be supplied via `autoscaling.metrics` to replace auto-generated CPU and memory metrics (target percentage fields remain range-validated if defined).
 
