@@ -52,7 +52,7 @@ The EPP's scaling behavior and effectiveness are highly dependent on the configu
     view) is per replica and not shared. In Active-Active mode, priority and fairness are enforced
     only within each replica's share of the traffic, and per-band capacity limits apply per
     replica, so the fleet-wide queued volume scales with the replica count.
-  - **Warning (Prefix Routing)**: **Active-Active mode should be avoided when using approximate prefix routing.** Because EPP replicas do not share prefix state, each replica only has visibility into the prefix state of the requests it has individually handled. This partition of state significantly degrades prefix cache hit rates, making prefix caching highly inefficient.
+  - **Plugin Compatibility**: EPP replicas do not share routing state. Active-Active mode works with stateless schedulers (`random-picker`), session affinity (`session-affinity-filter`), or plugins that read metrics from backend model servers. Avoid approximate prefix routing in Active-Active mode because replicas do not share prefix state.
   - For more technical details and context on EPP replica state sync and scaling limitations, see [Issue #1290](https://github.com/llm-d/llm-d-router/issues/1290).
 
 ### Performance Reference Data
@@ -229,7 +229,7 @@ EPP supports horizontal pod autoscaling through Kubernetes HorizontalPodAutoscal
 - **Incompatible with StatefulSet Topologies**: Priority routing and GKE preferred backends render EPP as a StatefulSet with fixed ordinal hostnames (`<name>-0`, `<name>-1`) for static Envoy routing. Autoscaling requires a standard Deployment managing a dynamically changing replica set in active-active mode. Enabling autoscaling alongside `router.proxy.priorityRouting.enabled: true` or GKE preferred backends fails chart validation.
 - **RollingUpdate Strategy**: The deployment defaults to `RollingUpdate` strategy (`maxUnavailable: 0`, `maxSurge: 1`) under autoscaling to keep serving capacity during scale events. Setting `router.epp.deploymentStrategy` overrides this default.
 - **Replica Count Configuration**: When autoscaling is enabled, `router.epp.replicas` is ignored. Replica counts are controlled by `autoscaling.minReplicas` and `autoscaling.maxReplicas`.
-- **Prefix Cache Consideration**: Prefix state is not synchronized across replicas. Autoscaling should be paired with session affinity or stateless schedulers (`random-picker`, `session-affinity-filter`).
+- **Plugin Compatibility**: Autoscaling requires active-active compatible plugins; see [Scaling Modes (Active-Active vs. Active-Passive)](#scaling-modes-active-active-vs-active-passive).
 
 #### Target Utilization Guidance
 
