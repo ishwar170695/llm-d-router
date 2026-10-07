@@ -18,10 +18,11 @@ limitations under the License.
 // ceilings per priority level. Lower-priority traffic is gated at lower saturation thresholds,
 // reserving capacity for higher-priority work as the pool approaches saturation.
 //
-// Behavior is configured via two independent parameters:
-//   - shape: the interpolation curve (currently "linear"; future: sigmoid, exponential, etc.).
-//   - domain: how priorities map to positions ("rank" for ordinal, "value" for proportional,
-//     "explicit" for operator-supplied anchors with value-based interpolation).
+// Configuration depends on the selected domain:
+//   - Algorithmic domains ("rank", "value"): distribute ceilings between minCeiling and maxCeiling
+//     using an interpolation curve (shape, currently "linear").
+//   - Explicit domain ("explicit"): maps priorities using operator-supplied anchors, interpolating
+//     by priority value between anchors and clamping outside their range.
 package priorityholdback
 
 import (
@@ -197,7 +198,7 @@ func computeLimitExplicit(anchors []explicitAnchor, priorities []int, out []floa
 	highest := anchors[len(anchors)-1]
 
 	for i, p := range priorities {
-		if len(anchors) == 1 || p <= lowest.priority {
+		if p <= lowest.priority {
 			out[i] = lowest.ceiling
 			continue
 		}

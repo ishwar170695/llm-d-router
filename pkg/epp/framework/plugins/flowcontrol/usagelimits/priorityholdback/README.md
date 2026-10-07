@@ -14,11 +14,11 @@ Higher-priority traffic continues to flow until saturation reaches its own (high
 
 ## Configuration
 
-Behavior is configured via two independent parameters: `shape` and `domain`. The resulting ceilings always range from `maxCeiling` for the highest priority to `minCeiling` for the lowest.
+For algorithmic domains (`rank`, `value`), behavior is configured via `shape`, `minCeiling`, and `maxCeiling`, distributing ceilings across `[minCeiling, maxCeiling]`. For the `explicit` domain, ceilings are determined by operator-supplied priority anchors in `ceilings`.
 
 ### `shape`
 
-The interpolation curve used to distribute ceilings across the range. Currently only `"linear"` is supported.
+The interpolation curve used to distribute ceilings across the range. Applies to algorithmic domains (`rank`, `value`). Currently only `"linear"` is supported.
 
 ### `domain`
 
