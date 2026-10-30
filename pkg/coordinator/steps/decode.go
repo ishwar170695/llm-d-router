@@ -83,8 +83,15 @@ func NewDecodeStep(gwClient *gateway.Client, params map[string]any) (pipeline.St
 	if err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-	if (wrapResp || wrapMsg) && outputMode != reqcommon.OutputModeText {
-		return nil, fmt.Errorf("decode: %s and %s require output_mode %q", ParamWrapResponses, ParamWrapMessages, reqcommon.OutputModeText)
+	if outputMode != reqcommon.OutputModeText {
+		switch {
+		case wrapResp && wrapMsg:
+			return nil, fmt.Errorf("decode: %s and %s require output_mode %q", ParamWrapResponses, ParamWrapMessages, reqcommon.OutputModeText)
+		case wrapResp:
+			return nil, fmt.Errorf("decode: %s requires output_mode %q", ParamWrapResponses, reqcommon.OutputModeText)
+		case wrapMsg:
+			return nil, fmt.Errorf("decode: %s requires output_mode %q", ParamWrapMessages, reqcommon.OutputModeText)
+		}
 	}
 	kvConn, err := buildKVConnector(params)
 	if err != nil {
@@ -122,11 +129,6 @@ func (s *DecodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 
 	logger.V(logutil.DEFAULT).Info("sending request", "path", path, "format", format, "stream", reqCtx.Stream)
 
-	proxyReq, err := newDecodeProxyRequest(ctx, logger, DecodeStepName, reqCtx, s.gwClient, path, body, nil)
-	if err != nil {
-		return err
-	}
-
 	if s.wrapsChatCompletion(reqCtx, format) {
 		return s.serveWrapped(ctx, logger, reqCtx, path, body, func(b []byte, id, _, mode string) ([]byte, error) {
 			return wrapChatCompletion(b, id, mode)
@@ -137,6 +139,11 @@ func (s *DecodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	}
 	if s.wrapsMessages(reqCtx, format) {
 		return s.serveWrapped(ctx, logger, reqCtx, path, body, wrapMessages, "messages")
+	}
+
+	proxyReq, err := newDecodeProxyRequest(ctx, logger, DecodeStepName, reqCtx, s.gwClient, path, body, nil)
+	if err != nil {
+		return err
 	}
 
 	writer, finalize := s.responseWriter(reqCtx)
@@ -227,7 +234,7 @@ func (s *DecodeStep) serveWrapped(ctx context.Context, logger logr.Logger, reqCt
 	if _, err := w.Write(wrapped); err != nil {
 		return fmt.Errorf("%s: writing response: %w", DecodeStepName, err)
 	}
-	logger.V(logutil.DEFAULT).Info(fmt.Sprintf("wrapped generate response as a %s", kind), "bodyLen", len(wrapped))
+	logger.V(logutil.DEFAULT).Info("wrapped generate response", "kind", kind, "bodyLen", len(wrapped))
 	return nil
 }
 

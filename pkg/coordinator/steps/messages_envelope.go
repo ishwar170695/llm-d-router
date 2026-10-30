@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
 	"github.com/llm-d/llm-d-router/pkg/common/usage"
@@ -53,6 +54,9 @@ func wrapMessages(generate []byte, requestID, model, wantMode string) ([]byte, e
 	id, _ := resp[reqcommon.FieldRequestID].(string)
 	if id == "" {
 		id = requestID
+	}
+	if !strings.HasPrefix(id, "msg_") {
+		id = "msg_" + id
 	}
 
 	m, _ := resp[reqcommon.FieldModel].(string)
@@ -128,13 +132,14 @@ func wrapMessages(generate []byte, requestID, model, wantMode string) ([]byte, e
 			prompt -= creation
 		}
 		mapped[reqcommon.FieldInputTokens] = prompt
+		var comp float64
 		if compVal, ok := block[reqcommon.FieldCompletionTokens]; ok && compVal != nil {
-			comp, _ := compVal.(float64)
+			comp, _ = compVal.(float64)
 			if comp < 0 {
 				return nil, fmt.Errorf("usage %s is negative: %v", reqcommon.FieldCompletionTokens, comp)
 			}
-			mapped[reqcommon.FieldOutputTokens] = comp
 		}
+		mapped[reqcommon.FieldOutputTokens] = comp
 		out[reqcommon.FieldUsage] = mapped
 	}
 

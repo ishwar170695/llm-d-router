@@ -51,7 +51,7 @@ func TestWrapMessages_TextResponse(t *testing.T) {
 	}`)
 
 	if got[reqcommon.FieldType] != reqcommon.TypeMessage || got[reqcommon.FieldRole] != reqcommon.RoleAssistant ||
-		got[reqcommon.FieldID] != "req-1" || got["model"] != "test-model" {
+		got[reqcommon.FieldID] != "msg_req-1" || got["model"] != "test-model" {
 		t.Errorf("envelope = %v", got)
 	}
 	if got[reqcommon.FieldStopReason] != reqcommon.StopReasonEndTurn || got[reqcommon.FieldStopSequence] != nil {
@@ -96,8 +96,8 @@ func TestWrapMessages_StopReasons(t *testing.T) {
 
 func TestWrapMessages_MissingUsageAndFallbackFields(t *testing.T) {
 	got := wrapMessagesMap(t, `{"output_mode":"text","choices":[{"finish_reason":"stop","text":""}]}`)
-	if got[reqcommon.FieldID] != "fallback-id" {
-		t.Errorf("id = %v, want the coordinator's request id", got[reqcommon.FieldID])
+	if got[reqcommon.FieldID] != "msg_fallback-id" {
+		t.Errorf("id = %v, want the coordinator's request id with msg_ prefix", got[reqcommon.FieldID])
 	}
 	if got[reqcommon.FieldModel] != "fallback-model" {
 		t.Errorf("model = %v, want fallback-model", got[reqcommon.FieldModel])
@@ -107,6 +107,22 @@ func TestWrapMessages_MissingUsageAndFallbackFields(t *testing.T) {
 	}
 	if content, ok := got[reqcommon.FieldContent].([]any); !ok || len(content) != 1 {
 		t.Errorf("content = %v, want one text block", got[reqcommon.FieldContent])
+	}
+}
+
+func TestWrapMessages_IDPrefixing(t *testing.T) {
+	// A request id that already has msg_ is preserved without doubling.
+	got := wrapMessagesMap(t, `{"request_id":"msg_already_prefixed","output_mode":"text","choices":[{"finish_reason":"stop","text":""}]}`)
+	if got[reqcommon.FieldID] != "msg_already_prefixed" {
+		t.Errorf("id = %v, want msg_already_prefixed", got[reqcommon.FieldID])
+	}
+}
+
+func TestWrapMessages_UsageMissingCompletionTokens(t *testing.T) {
+	got := wrapMessagesMap(t, `{"output_mode":"text","usage":{"prompt_tokens":7},"choices":[{"finish_reason":"stop","text":""}]}`)
+	usage, _ := got[reqcommon.FieldUsage].(map[string]any)
+	if usage[reqcommon.FieldInputTokens] != float64(7) || usage[reqcommon.FieldOutputTokens] != float64(0) {
+		t.Errorf("usage = %v, want input_tokens=7 and output_tokens=0", usage)
 	}
 }
 

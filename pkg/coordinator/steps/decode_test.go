@@ -915,15 +915,46 @@ func TestDecodeStep_WrapResponsesMessages(t *testing.T) {
 // TestDecodeStep_WrapResponsesMessagesRequireTextMode verifies Responses and
 // Messages wraps reject derender, whose parsed message they do not convert.
 func TestDecodeStep_WrapResponsesMessagesRequireTextMode(t *testing.T) {
-	for _, param := range []string{ParamWrapResponses, ParamWrapMessages} {
-		_, err := NewDecodeStep(gateway.New(config.GatewayConfig{}), map[string]any{
-			ParamKVConnector:          kv.NIXL,
-			reqcommon.FieldOutputMode: reqcommon.OutputModeDerender,
-			param:                     true,
+	for _, tc := range []struct {
+		name    string
+		params  map[string]any
+		wantErr string
+	}{
+		{
+			name: "wrap_responses only",
+			params: map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeDerender,
+				ParamWrapResponses:        true,
+			},
+			wantErr: "decode: wrap_responses requires output_mode \"text\"",
+		},
+		{
+			name: "wrap_messages only",
+			params: map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeDerender,
+				ParamWrapMessages:         true,
+			},
+			wantErr: "decode: wrap_messages requires output_mode \"text\"",
+		},
+		{
+			name: "both wrappers",
+			params: map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeDerender,
+				ParamWrapResponses:        true,
+				ParamWrapMessages:         true,
+			},
+			wantErr: "decode: wrap_responses and wrap_messages require output_mode \"text\"",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewDecodeStep(gateway.New(config.GatewayConfig{}), tc.params)
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
 		})
-		if err == nil {
-			t.Errorf("%s with derender: expected an error", param)
-		}
 	}
 }
 
