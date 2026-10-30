@@ -486,3 +486,17 @@ pipeline:
       #   The rewritten leg is not streamed to the client but read whole (up
       #   to 8 MB) so the envelope can be rebuilt around it.
       #   wrap_chat_completion: false
+      #
+      #   wrap_responses rebuilds the Responses envelope around a rewritten
+      #   leg's response, for a client that called /v1/responses on a tokens-in
+      #   pipeline. Default false. Requires output_mode: text. A length stop
+      #   is reported as an incomplete response; a finish reason other than
+      #   stop or length fails the request. Only a non-streaming request is
+      #   rewritten.
+      #   wrap_responses: false
+      #
+      #   wrap_messages rebuilds the Messages envelope the same way for a
+      #   client that called /v1/messages. Default false. Requires
+      #   output_mode: text. The message is built from the first choice, and
+      #   stop and length map to end_turn and max_tokens.
+      #   wrap_messages: false

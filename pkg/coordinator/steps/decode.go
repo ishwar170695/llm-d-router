@@ -53,6 +53,8 @@ type DecodeStep struct {
 	useOpenAIFormat    bool
 	outputMode         string
 	wrapChatCompletion bool
+	wrapResponses      bool
+	wrapMessages       bool
 	gwClient           *gateway.Client
 	kv                 kv.Connector
 }
@@ -73,6 +75,17 @@ func NewDecodeStep(gwClient *gateway.Client, params map[string]any) (pipeline.St
 	if err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
+	wrapResp, _, err := paramBool(params, ParamWrapResponses)
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	wrapMsg, _, err := paramBool(params, ParamWrapMessages)
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	if (wrapResp || wrapMsg) && outputMode != reqcommon.OutputModeText {
+		return nil, fmt.Errorf("decode: %s and %s require output_mode %q", ParamWrapResponses, ParamWrapMessages, reqcommon.OutputModeText)
+	}
 	kvConn, err := buildKVConnector(params)
 	if err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
@@ -81,6 +94,8 @@ func NewDecodeStep(gwClient *gateway.Client, params map[string]any) (pipeline.St
 		useOpenAIFormat:    useOpenAI,
 		outputMode:         outputMode,
 		wrapChatCompletion: wrapChat,
+		wrapResponses:      wrapResp,
+		wrapMessages:       wrapMsg,
 		gwClient:           gwClient,
 		kv:                 kvConn,
 	}, nil
@@ -113,7 +128,15 @@ func (s *DecodeStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContex
 	}
 
 	if s.wrapsChatCompletion(reqCtx, format) {
-		return s.serveWrappedChatCompletion(ctx, logger, reqCtx, path, body)
+		return s.serveWrapped(ctx, logger, reqCtx, path, body, func(b []byte, id, _, mode string) ([]byte, error) {
+			return wrapChatCompletion(b, id, mode)
+		}, "chat completion")
+	}
+	if s.wrapsResponses(reqCtx, format) {
+		return s.serveWrapped(ctx, logger, reqCtx, path, body, wrapResponses, "responses")
+	}
+	if s.wrapsMessages(reqCtx, format) {
+		return s.serveWrapped(ctx, logger, reqCtx, path, body, wrapMessages, "messages")
 	}
 
 	writer, finalize := s.responseWriter(reqCtx)
@@ -143,14 +166,30 @@ func (s *DecodeStep) wrapsChatCompletion(reqCtx *pipeline.RequestContext, format
 		!reqCtx.Stream
 }
 
-// serveWrappedChatCompletion sends the decode leg as a plain call, rewrites the
-// generate response it returns into a chat completions one, and writes that to
+func (s *DecodeStep) wrapsResponses(reqCtx *pipeline.RequestContext, format reqcommon.APIType) bool {
+	return s.wrapResponses &&
+		format == reqcommon.APITypeVLLMGenerate &&
+		reqcommon.DetectAPIType(reqCtx.OriginalPath) == reqcommon.APITypeResponses &&
+		!reqCtx.Stream
+}
+
+func (s *DecodeStep) wrapsMessages(reqCtx *pipeline.RequestContext, format reqcommon.APIType) bool {
+	return s.wrapMessages &&
+		format == reqcommon.APITypeVLLMGenerate &&
+		reqcommon.DetectAPIType(reqCtx.OriginalPath) == reqcommon.APITypeMessages &&
+		!reqCtx.Stream
+}
+
+type responseWrapper func(generate []byte, requestID, model, wantMode string) ([]byte, error)
+
+// serveWrapped sends the decode leg as a plain call, rewrites the
+// generate response it returns into the client API envelope using wrap, and writes that to
 // the client. The leg is not proxied: the whole body is needed before any of it
 // can be rewritten.
 //
 // maxDecodeWrapSize bounds what is read, since this holds the response in
 // memory where the proxying path streams it.
-func (s *DecodeStep) serveWrappedChatCompletion(ctx context.Context, logger logr.Logger, reqCtx *pipeline.RequestContext, path string, body map[string]any) error {
+func (s *DecodeStep) serveWrapped(ctx context.Context, logger logr.Logger, reqCtx *pipeline.RequestContext, path string, body map[string]any, wrap responseWrapper, kind string) error {
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("%s: marshal: %w", DecodeStepName, err)
@@ -178,7 +217,7 @@ func (s *DecodeStep) serveWrappedChatCompletion(ctx context.Context, logger logr
 	}
 	reqCtx.CaptureResponseHeaders(resp.Header)
 
-	wrapped, err := wrapChatCompletion(generate, reqCtx.RequestID, s.outputMode)
+	wrapped, err := wrap(generate, reqCtx.RequestID, reqCtx.Model, s.outputMode)
 	if err != nil {
 		return fmt.Errorf("%s: %w", DecodeStepName, err)
 	}
@@ -188,7 +227,7 @@ func (s *DecodeStep) serveWrappedChatCompletion(ctx context.Context, logger logr
 	if _, err := w.Write(wrapped); err != nil {
 		return fmt.Errorf("%s: writing response: %w", DecodeStepName, err)
 	}
-	logger.V(logutil.DEFAULT).Info("wrapped generate response as a chat completion", "bodyLen", len(wrapped))
+	logger.V(logutil.DEFAULT).Info(fmt.Sprintf("wrapped generate response as a %s", kind), "bodyLen", len(wrapped))
 	return nil
 }
 

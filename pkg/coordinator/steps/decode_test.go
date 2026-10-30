@@ -848,6 +848,178 @@ func TestDecodeStep_WrapChatCompletionSkipped(t *testing.T) {
 	}
 }
 
+// TestDecodeStep_WrapResponsesMessages verifies non-streaming Responses and
+// Messages requests rewrite their generate response into the client envelope.
+func TestDecodeStep_WrapResponsesMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != reqcommon.PathVLLMGenerate {
+			t.Errorf("path = %q, want %q", r.URL.Path, reqcommon.PathVLLMGenerate)
+		}
+		w.Header().Set("Content-Type", reqcommon.ContentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"request_id":  "req-1",
+			"model":       testModelName,
+			"output_mode": "text",
+			"choices":     []any{map[string]any{"finish_reason": "stop", "text": "hello"}},
+		})
+	}))
+	defer server.Close()
+
+	for _, tc := range []struct {
+		name      string
+		param     string
+		path      string
+		wantField string
+		wantValue any
+	}{
+		{name: "responses", param: ParamWrapResponses, path: reqcommon.PathResponses, wantField: reqcommon.FieldObject, wantValue: reqcommon.ObjectResponse},
+		{name: "messages", param: ParamWrapMessages, path: reqcommon.PathMessages, wantField: reqcommon.FieldType, wantValue: reqcommon.TypeMessage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			step, err := NewDecodeStep(gateway.New(config.GatewayConfig{Address: server.URL}), map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				"use_openai_format":       false,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeText,
+				tc.param:                  true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			recorder := httptest.NewRecorder()
+			reqCtx := &pipeline.RequestContext{
+				RequestID:        "req-1",
+				OriginalPath:     tc.path,
+				Model:            testModelName,
+				TokenIDs:         []int{1, 2},
+				KVTransferParams: map[string]any{"block_id": "block-1"},
+				Body:             map[string]any{"model": testModelName},
+				ResponseWriter:   recorder,
+			}
+
+			if err := step.Execute(context.Background(), reqCtx); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+				t.Fatalf("client body is not JSON: %v", err)
+			}
+			if got[tc.wantField] != tc.wantValue {
+				t.Fatalf("%s = %v, want %v", tc.wantField, got[tc.wantField], tc.wantValue)
+			}
+		})
+	}
+}
+
+// TestDecodeStep_WrapResponsesMessagesRequireTextMode verifies Responses and
+// Messages wraps reject derender, whose parsed message they do not convert.
+func TestDecodeStep_WrapResponsesMessagesRequireTextMode(t *testing.T) {
+	for _, param := range []string{ParamWrapResponses, ParamWrapMessages} {
+		_, err := NewDecodeStep(gateway.New(config.GatewayConfig{}), map[string]any{
+			ParamKVConnector:          kv.NIXL,
+			reqcommon.FieldOutputMode: reqcommon.OutputModeDerender,
+			param:                     true,
+		})
+		if err == nil {
+			t.Errorf("%s with derender: expected an error", param)
+		}
+	}
+}
+
+// TestDecodeStep_WrapResponsesMessagesSkipped verifies streaming requests are proxied.
+func TestDecodeStep_WrapResponsesMessagesSkipped(t *testing.T) {
+	const generateBody = `{"request_id":"r1","output_mode":"text","choices":[{"index":0,"text":"hi"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(generateBody))
+	}))
+	defer server.Close()
+
+	for _, tc := range []struct {
+		param string
+		path  string
+	}{
+		{param: ParamWrapResponses, path: reqcommon.PathResponses},
+		{param: ParamWrapMessages, path: reqcommon.PathMessages},
+	} {
+		t.Run(tc.param, func(t *testing.T) {
+			step, err := NewDecodeStep(gateway.New(config.GatewayConfig{Address: server.URL}), map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				"use_openai_format":       false,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeText,
+				tc.param:                  true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			recorder := httptest.NewRecorder()
+			reqCtx := &pipeline.RequestContext{
+				RequestID:        "req-skip",
+				OriginalPath:     tc.path,
+				Model:            testModelName,
+				Stream:           true,
+				TokenIDs:         []int{1, 2},
+				KVTransferParams: map[string]any{"block_id": "block-1"},
+				Body:             map[string]any{"model": testModelName},
+				ResponseWriter:   recorder,
+			}
+			if err := step.Execute(context.Background(), reqCtx); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if body := recorder.Body.String(); body != generateBody {
+				t.Fatalf("client body = %q, want generate response unchanged", body)
+			}
+		})
+	}
+}
+
+// TestDecodeStep_WrapErrors verifies invalid worker responses fail the decode step
+// when wrapping is active.
+func TestDecodeStep_WrapErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", reqcommon.ContentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"request_id":  "r",
+			"output_mode": "text",
+			"choices":     []any{},
+		})
+	}))
+	defer server.Close()
+
+	for _, tc := range []struct {
+		param string
+		path  string
+	}{
+		{param: ParamWrapResponses, path: reqcommon.PathResponses},
+		{param: ParamWrapMessages, path: reqcommon.PathMessages},
+	} {
+		t.Run(tc.param, func(t *testing.T) {
+			step, err := NewDecodeStep(gateway.New(config.GatewayConfig{Address: server.URL}), map[string]any{
+				ParamKVConnector:          kv.NIXL,
+				"use_openai_format":       false,
+				reqcommon.FieldOutputMode: reqcommon.OutputModeText,
+				tc.param:                  true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reqCtx := &pipeline.RequestContext{
+				RequestID:        "r",
+				OriginalPath:     tc.path,
+				Model:            testModelName,
+				TokenIDs:         []int{1, 2},
+				KVTransferParams: map[string]any{"block_id": "b1"},
+				Body:             map[string]any{"model": testModelName},
+				ResponseWriter:   httptest.NewRecorder(),
+			}
+			if err := step.Execute(context.Background(), reqCtx); err == nil {
+				t.Fatal("expected an error for empty choices")
+			}
+		})
+	}
+}
+
 // TestDecodeStep_UnreachableFormat_ReturnsError verifies that a request path
 // for a format prepareDecodeBody's switch does not handle explicitly
 // (APITypeSGLangGenerate) fails through its default case, reporting an error
