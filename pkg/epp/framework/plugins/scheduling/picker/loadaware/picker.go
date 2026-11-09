@@ -247,7 +247,7 @@ func (p *LoadAwarePicker) ResponseBody(ctx context.Context, req *fwksched.Infere
 
 	inputTokens := 0
 	if req.Body != nil && req.Body.TokenizedPrompt != nil {
-		inputTokens = len(req.Body.TokenizedPrompt.TokenIDs)
+		inputTokens = req.Body.TokenizedPrompt.TokenCount()
 	}
 	tokens := float64(inputTokens + resp.Usage.CompletionTokens)
 	throughput := tokens / duration

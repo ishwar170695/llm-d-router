@@ -237,7 +237,7 @@ func TestResponseBody_UpdatesEMA(t *testing.T) {
 	req := &fwksched.InferenceRequest{
 		RequestID: "req-1",
 		Body: &fwkrh.InferenceRequestBody{
-			TokenizedPrompt: &fwkrh.TokenizedPrompt{TokenIDs: []uint32{1, 2, 3, 4, 5}},
+			TokenizedPrompt: &fwkrh.TokenizedPrompt{PerPromptTokens: [][]uint32{{1, 2, 3, 4, 5}}},
 		},
 	}
 	resp := &fwkrc.Response{
